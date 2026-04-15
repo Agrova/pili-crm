@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "postEdit": ["ruff check --fix ."],
+    "preEdit": []
+  },
+  "defaultModel": "claude-3-5-sonnet"
+}
