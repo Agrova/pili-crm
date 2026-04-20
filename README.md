@@ -83,10 +83,29 @@ uvicorn app.main:app --reload
 # → GET http://localhost:8000/health  →  {"status": "ok"}
 ```
 
+## Pricing Policy (ADR-004)
+
+Полная спецификация: [`docs/adr/ADR-004-pricing-profit-policy.md`](docs/adr/ADR-004-pricing-profit-policy.md). Детали реализации: [`app/pricing/README.md`](app/pricing/README.md).
+
+**Две ветки формулы:**
+
+| Ветка | Базовая стоимость |
+|-------|------------------|
+| `retail` | `purchase_cost_rub + weight_kg × shipping_per_kg_usd × rate` |
+| `manufacturer` | `product_price_fcy × rate + logistics_legs + customs + intermediary` |
+
+**Общий pipeline:** `base_cost → margin (20% default) → discount (опц.) → rounding (ceiling)`
+
+**Rounding:** шаг 10 для цен < 1000 RUB, шаг 100 для цен ≥ 1000 RUB. Operator override допустим.
+
+**Два слоя:**
+- *Planned* — immutable snapshot `pricing_price_calculation` с полным breakdown JSONB (модуль `pricing`)
+- *Actual* — вычисляется запросом по данным `finance` (фактический курс, банковская комиссия, overhead)
+
 ## Verify
 
 ```bash
-ruff check .
+ruff check app/
 mypy app/
-pytest --collect-only
+pytest tests/ -v
 ```
