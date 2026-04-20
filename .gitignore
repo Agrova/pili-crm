@@ -37,8 +37,8 @@ htmlcov/
 # macOS
 .DS_Store
 
-# Alembic
-alembic/versions/*.py
+# Alembic — migration scripts are committed; ignore only compiled cache
+# (alembic/versions/*.py intentionally tracked)
 
 # Logs
 *.log
