@@ -43,12 +43,42 @@ shared       ← all modules (no outbound deps)
 - SQLAlchemy 2.0 async throughout
 - Alembic migrations only (no `create_all`)
 
+## Схема данных
+
+Полная спецификация: [`docs/adr/ADR-003-postgres-core-schema.md`](docs/adr/ADR-003-postgres-core-schema.md).
+
+Единая схема `public`, таблицы с префиксами модулей (`{module}_{entity}`).
+
+| Модуль | Таблицы |
+|--------|---------|
+| `catalog` | `catalog_supplier`, `catalog_product`, `catalog_product_attribute` |
+| `orders` | `orders_customer`, `orders_customer_profile`, `orders_order`, `orders_order_item` |
+| `procurement` | `procurement_purchase`, `procurement_purchase_item`, `procurement_shipment`, `procurement_tracking_event` |
+| `warehouse` | `warehouse_receipt`, `warehouse_receipt_item`, `warehouse_stock_item`, `warehouse_reservation` |
+| `pricing` | `pricing_exchange_rate`, `pricing_price_calculation` |
+| `communications` | `communications_email_thread`, `communications_email_message`, `communications_telegram_chat`, `communications_telegram_message`, `communications_link` |
+| `finance` | `finance_ledger_entry`, `finance_expense`, `finance_tax_entry`, `finance_exchange_rate`, `finance_exchange_operation` |
+
+Enum-типы PostgreSQL (10 штук): `catalog_attribute_source`, `orders_order_status`,
+`procurement_purchase_status`, `pricing_exchange_rate_source`,
+`communications_link_target_module`, `communications_link_confidence`,
+`finance_entry_type`, `finance_expense_category`, `finance_tax_type`,
+`finance_exchange_rate_source`.
+
+Применение миграций:
+
+```bash
+docker-compose up -d postgres
+alembic upgrade head
+```
+
 ## Quick Start
 
 ```bash
 cp .env.example .env
 docker-compose up -d         # PostgreSQL 16
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
+alembic upgrade head
 uvicorn app.main:app --reload
 # → GET http://localhost:8000/health  →  {"status": "ok"}
 ```
