@@ -24,6 +24,18 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.shared.base_model import Base, TimestampMixin
 
 
+class TelegramChatReviewStatus(enum.StrEnum):
+    """Operator review status for Telegram chats imported via ADR-010 ingestion.
+
+    NULL in the DB means the chat was created manually (not from ingestion).
+    """
+
+    unreviewed = "unreviewed"
+    linked = "linked"
+    new_customer = "new_customer"
+    ignored = "ignored"
+
+
 class CommunicationsLinkTargetModule(enum.StrEnum):
     catalog = "catalog"
     orders = "orders"
@@ -96,12 +108,30 @@ class CommunicationsTelegramChat(Base, TimestampMixin):
             "telegram_chat_id",
             name="uq_communications_telegram_chat_telegram_chat_id",
         ),
+        # ADR-009: partial index powers the moderation queue query
+        # (WHERE review_status = 'unreviewed')
+        Index(
+            "ix_telegram_chat_unreviewed",
+            "review_status",
+            postgresql_where=text("review_status = 'unreviewed'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     telegram_chat_id: Mapped[str] = mapped_column(Text, nullable=False)
     chat_type: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ADR-009: watermark for incremental import (NULL = not yet imported)
+    last_imported_message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ADR-009: operator review status (NULL = manually created, not from ingestion)
+    review_status: Mapped[TelegramChatReviewStatus | None] = mapped_column(
+        SAEnum(
+            TelegramChatReviewStatus,
+            name="telegram_chat_review_status",
+            create_type=False,  # type is created by the migration
+        ),
+        nullable=True,
+    )
 
     messages: Mapped[list[CommunicationsTelegramMessage]] = relationship(
         "CommunicationsTelegramMessage", back_populates="chat"

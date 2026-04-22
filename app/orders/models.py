@@ -30,11 +30,52 @@ class OrdersOrderStatus(enum.StrEnum):
     draft = "draft"
     confirmed = "confirmed"
     in_procurement = "in_procurement"
-    in_transit = "in_transit"
+    shipped_by_supplier = "shipped_by_supplier"
+    received_by_forwarder = "received_by_forwarder"
     arrived = "arrived"
-    ready_for_pickup = "ready_for_pickup"
     delivered = "delivered"
     cancelled = "cancelled"
+
+
+class OrdersOrderItemStatus(enum.StrEnum):
+    pending = "pending"
+    ordered = "ordered"
+    shipped = "shipped"
+    at_forwarder = "at_forwarder"
+    arrived = "arrived"
+    delivered = "delivered"
+    cancelled = "cancelled"
+
+
+# Lower weight = earlier in pipeline. Used by derive_order_status.
+ITEM_STATUS_WEIGHT: dict[str, int] = {
+    "pending": 0,
+    "ordered": 1,
+    "shipped": 2,
+    "at_forwarder": 3,
+    "arrived": 4,
+    "delivered": 5,
+    "cancelled": 99,
+}
+
+ITEM_TO_ORDER_STATUS_MAP: dict[str, str] = {
+    "pending": "in_procurement",
+    "ordered": "in_procurement",
+    "shipped": "shipped_by_supplier",
+    "at_forwarder": "received_by_forwarder",
+    "arrived": "arrived",
+    "delivered": "delivered",
+}
+
+# Item statuses that are still awaiting a shipment (used in shipment matching).
+PENDING_ITEM_STATUSES: frozenset[OrdersOrderItemStatus] = frozenset(
+    {
+        OrdersOrderItemStatus.pending,
+        OrdersOrderItemStatus.ordered,
+        OrdersOrderItemStatus.shipped,
+        OrdersOrderItemStatus.at_forwarder,
+    }
+)
 
 
 class OrdersCustomer(Base, TimestampMixin):
@@ -63,6 +104,8 @@ class OrdersCustomer(Base, TimestampMixin):
     email: Mapped[str | None] = mapped_column(Text, nullable=True)
     phone: Mapped[str | None] = mapped_column(Text, nullable=True)
     telegram_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ADR-009: username stored separately — changes independently from telegram_id
+    telegram_username: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     profile: Mapped[OrdersCustomerProfile | None] = relationship(
         "OrdersCustomerProfile", back_populates="customer", uselist=False
@@ -86,6 +129,10 @@ class OrdersCustomerProfile(Base, TimestampMixin):
     )
     addresses: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ADR-009: structured profile facts extracted from Telegram conversations
+    preferences: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    delivery_preferences: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    incidents: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     customer: Mapped[OrdersCustomer] = relationship(
         "OrdersCustomer", back_populates="profile"
@@ -168,6 +215,11 @@ class OrdersOrderItem(Base, TimestampMixin):
     )
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    status: Mapped[OrdersOrderItemStatus] = mapped_column(
+        SAEnum(OrdersOrderItemStatus, name="orders_order_item_status"),
+        nullable=False,
+        server_default=OrdersOrderItemStatus.pending.value,
+    )
     # ADR-004 field
     operator_adjusted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
