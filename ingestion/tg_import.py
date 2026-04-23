@@ -14,6 +14,7 @@ import asyncio
 import logging
 import sys
 import time
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +33,13 @@ from ingestion.parser import ParsedChat, parse_export
 
 log = logging.getLogger(__name__)
 
+MESSAGE_INSERT_BATCH_SIZE = 500
+
+
+def _iter_chunks[T](seq: Sequence[T], size: int) -> Generator[Sequence[T], None, None]:
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
 
 @dataclass
 class ImportResult:
@@ -45,11 +53,19 @@ class ImportResult:
     errors: list[str] = field(default_factory=list)
 
 
-async def _import_one_chat(engine: AsyncEngine, chat: ParsedChat) -> tuple[str, int, int]:
+async def _import_one_chat(
+    engine: AsyncEngine,
+    chat: ParsedChat,
+    *,
+    progress_prefix: str | None = None,
+) -> tuple[str, int, int]:
     """Import one chat in a single transaction.
 
     Returns (status, inserted, skipped); status is 'new' or 'updated'.
     Raises on DB error — engine.begin() rolls back the transaction automatically.
+
+    When progress_prefix is given and the chat requires multiple INSERT batches,
+    prints one line per batch: "{progress_prefix} (batch N/M)".
     """
     async with engine.begin() as conn:
         # 1. Find existing chat row
@@ -102,30 +118,41 @@ async def _import_one_chat(engine: AsyncEngine, chat: ParsedChat) -> tuple[str, 
         ]
         skipped = len(chat.messages) - len(new_msgs)
 
-        # 3. Batch-insert messages — ON CONFLICT DO NOTHING for safety
+        # 3. Batch-insert messages — chunked to stay under asyncpg's 32767-param limit
         inserted = 0
         if new_msgs:
-            values = [
-                {
-                    "chat_id": chat_db_id,
-                    "telegram_message_id": msg.telegram_message_id,
-                    "from_user_id": msg.from_user_id,
-                    "sent_at": msg.sent_at,
-                    "text": msg.text,
-                    "raw_payload": msg.raw_payload,
-                    "reply_to_telegram_message_id": msg.reply_to_telegram_message_id,
-                }
-                for msg in new_msgs
-            ]
-            batch = await conn.execute(
-                pg_insert(CommunicationsTelegramMessage)
-                .values(values)
-                .on_conflict_do_nothing(
-                    constraint="uq_communications_telegram_message_chat_msg"
+            chunks = list(_iter_chunks(new_msgs, MESSAGE_INSERT_BATCH_SIZE))
+            total_batches = len(chunks)
+            for batch_num, chunk in enumerate(chunks, 1):
+                if progress_prefix is not None and total_batches > 1:
+                    print(
+                        f"{progress_prefix} (batch {batch_num}/{total_batches})",
+                        flush=True,
+                    )
+                values = [
+                    {
+                        "chat_id": chat_db_id,
+                        "telegram_message_id": msg.telegram_message_id,
+                        "from_user_id": msg.from_user_id,
+                        "sent_at": msg.sent_at,
+                        "text": msg.text,
+                        "raw_payload": msg.raw_payload,
+                        "reply_to_telegram_message_id": msg.reply_to_telegram_message_id,
+                    }
+                    for msg in chunk
+                ]
+                batch_result = await conn.execute(
+                    pg_insert(CommunicationsTelegramMessage)
+                    .values(values)
+                    .on_conflict_do_nothing(
+                        constraint="uq_communications_telegram_message_chat_msg"
+                    )
                 )
-            )
-            # rowcount is the number of rows actually inserted (conflicts excluded)
-            inserted = batch.rowcount if batch.rowcount >= 0 else len(new_msgs)
+                inserted += (
+                    batch_result.rowcount
+                    if batch_result.rowcount >= 0
+                    else len(chunk)
+                )
 
             # 4. Advance watermark to max imported message_id
             max_id = str(max(int(m.telegram_message_id) for m in new_msgs))
@@ -172,12 +199,13 @@ async def run_import(
     try:
         for i, chat in enumerate(chats, 1):
             label = chat.title or chat.telegram_chat_id
-            print(
-                f"[{i}/{len(chats)}] {label}: {len(chat.messages)} messages",
-                flush=True,
-            )
+            progress_prefix = f"[{i}/{len(chats)}] {label}: {len(chat.messages)} messages"
+            if len(chat.messages) <= MESSAGE_INSERT_BATCH_SIZE:
+                print(progress_prefix, flush=True)
             try:
-                status, inserted, skipped = await _import_one_chat(engine, chat)
+                status, inserted, skipped = await _import_one_chat(
+                    engine, chat, progress_prefix=progress_prefix
+                )
                 if status == "new":
                     result.chats_new += 1
                 else:

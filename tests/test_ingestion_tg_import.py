@@ -1,7 +1,8 @@
-"""Tests for ingestion/parser.py (1–8) and ingestion/tg_import.py (9–12)."""
+"""Tests for ingestion/parser.py (1–8) and ingestion/tg_import.py (9–15)."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -12,7 +13,45 @@ from sqlalchemy.pool import NullPool
 
 from app.config import settings
 from ingestion.parser import parse_export, parse_message
-from ingestion.tg_import import run_import
+from ingestion.tg_import import MESSAGE_INSERT_BATCH_SIZE, run_import
+
+
+def _make_export_json(
+    tmp_path: Path,
+    *,
+    chat_id: int = 999001,
+    title: str = "Test Chat",
+    n_messages: int,
+) -> Path:
+    """Write a minimal Telegram export JSON with n_messages into tmp_path."""
+    messages = [
+        {
+            "id": i,
+            "type": "message",
+            "date": "2024-01-01T10:00:00",
+            "date_unixtime": str(1704103200 + i),
+            "from": "Alice",
+            "from_id": "user100001",
+            "text": f"message {i}",
+            "text_entities": [{"type": "plain", "text": f"message {i}"}],
+        }
+        for i in range(1, n_messages + 1)
+    ]
+    data = {
+        "chats": {
+            "list": [
+                {
+                    "id": chat_id,
+                    "type": "personal_chat",
+                    "name": title,
+                    "messages": messages,
+                }
+            ]
+        }
+    }
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -374,3 +413,87 @@ async def test_dry_run_does_not_write_to_db(clean_telegram: AsyncEngine) -> None
     assert msg_before == 0
     assert chat_after == 0
     assert msg_after == 0
+
+
+# ─── 13 ── batching: 5 000-message chat imports without parameter-limit error ──
+
+
+async def test_import_large_chat_batching(
+    clean_telegram: AsyncEngine, tmp_path: Path
+) -> None:
+    n = 5000
+    json_path = _make_export_json(tmp_path, chat_id=500001, n_messages=n)
+
+    result = await run_import(json_path)
+
+    assert result.chats_failed == 0
+    assert result.chats_new == 1
+    assert result.msgs_inserted == n
+
+    async with clean_telegram.connect() as conn:
+        msg_count = (
+            await conn.execute(
+                text("SELECT COUNT(*) FROM communications_telegram_message")
+            )
+        ).scalar_one()
+
+    assert msg_count == n
+
+
+# ─── 14 ── idempotency: second run on large chat inserts 0 extra rows ─────────
+
+
+async def test_import_large_chat_idempotent(
+    clean_telegram: AsyncEngine, tmp_path: Path
+) -> None:
+    n = 5000
+    json_path = _make_export_json(tmp_path, chat_id=500002, n_messages=n)
+
+    await run_import(json_path)
+    r2 = await run_import(json_path)
+
+    assert r2.chats_failed == 0
+    assert r2.msgs_inserted == 0
+    assert r2.msgs_skipped == n
+
+    async with clean_telegram.connect() as conn:
+        msg_count = (
+            await conn.execute(
+                text("SELECT COUNT(*) FROM communications_telegram_message")
+            )
+        ).scalar_one()
+
+    assert msg_count == n
+
+
+# ─── 15 ── batch boundary sizes: BATCH-1, BATCH, BATCH+1 all succeed ──────────
+
+
+@pytest.mark.parametrize(
+    "n_messages",
+    [
+        MESSAGE_INSERT_BATCH_SIZE - 1,
+        MESSAGE_INSERT_BATCH_SIZE,
+        MESSAGE_INSERT_BATCH_SIZE + 1,
+    ],
+)
+async def test_import_batch_boundary(
+    clean_telegram: AsyncEngine, tmp_path: Path, n_messages: int
+) -> None:
+    json_path = _make_export_json(
+        tmp_path, chat_id=600000 + n_messages, n_messages=n_messages
+    )
+
+    result = await run_import(json_path)
+
+    assert result.chats_failed == 0
+    assert result.msgs_inserted == n_messages
+
+    async with clean_telegram.connect() as conn:
+        msg_count = (
+            await conn.execute(
+                text("SELECT COUNT(*) FROM communications_telegram_message")
+            )
+        ).scalar_one()
+
+    assert msg_count == n_messages
