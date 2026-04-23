@@ -77,7 +77,7 @@ async def test_migration_upgrade_downgrade() -> None:
     ), "Expected migration to be at head before this test"
 
     try:
-        _alembic("downgrade", "-1")
+        _alembic("downgrade", "4f8fe83398af")
 
         # All six added columns must be absent
         for table, col in [
