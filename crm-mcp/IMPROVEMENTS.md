@@ -90,3 +90,28 @@
 - **Предложение:** добавить поле `created_at` в ответ, а также параметры `created_after` / `created_before` для фильтрации по периоду. Также полезна сортировка по дате (`sort_by: "created_at"`, `order: "desc"`).
 - **Статус:** triaged
 - **Связанные решения:** Prompt Factory, Пакет α
+
+## 2026-04-23 — Added tools: get_unreviewed_chats, link_chat_to_customer (ADR-010 Task 2)
+
+Two new tools implementing Phase 3 of ADR-010:
+- `get_unreviewed_chats`: moderation queue for imported Telegram chats
+- `link_chat_to_customer`: resolve a chat (link / create / ignore)
+
+Total tools: 11.
+
+Known operational notes (to watch during real use):
+- Chat title may be None — tool uses "Telegram user {id}" stub; operator
+  should rename via future tool or manual DB edit if needed.
+- telegram_id collision on link-to-existing: if the chat's telegram_chat_id
+  is already held by a different customer, the tool does NOT overwrite
+  — it logs a warning and returns `telegram_id_conflict` in the response
+  so Cowork can tell the operator "linked, but telegram_id is already with
+  customer A — possible duplicate?".
+- telegram_id mismatch on same customer (customer already has a different
+  telegram_id): tool preserves existing value, logs warning, no conflict
+  field in response.
+- get_unreviewed_chats does not paginate beyond `limit` — if >50 chats
+  await review, default limit=50 may hide some; explicit higher limit works.
+- Reject re-processing: chat with review_status NOT IN (NULL, 'unreviewed')
+  raises ValueError. Re-link of an already-linked chat is a separate
+  admin operation (future tool).

@@ -7,6 +7,8 @@ from tools import (
     create_customer,
     create_order,
     find_customer,
+    get_unreviewed_chats,
+    link_chat_to_customer,
     list_customers,
     match_shipment,
     pending_orders,
@@ -24,6 +26,8 @@ TOOLS = (
     find_customer,
     create_customer,
     create_order,
+    get_unreviewed_chats,
+    link_chat_to_customer,
 )
 
 __all__ = [
@@ -37,4 +41,6 @@ __all__ = [
     "find_customer",
     "create_customer",
     "create_order",
+    "get_unreviewed_chats",
+    "link_chat_to_customer",
 ]
