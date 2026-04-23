@@ -72,6 +72,9 @@ class ProcurementPurchase(Base, TimestampMixin):
     )
     total_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     currency: Mapped[str | None] = currency_column(nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     items: Mapped[list[ProcurementPurchaseItem]] = relationship(
         "ProcurementPurchaseItem", back_populates="purchase"

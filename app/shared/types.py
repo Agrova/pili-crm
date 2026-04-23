@@ -1,8 +1,16 @@
+import enum
 from decimal import Decimal
 from typing import Any, NewType
 
 from sqlalchemy import CHAR
 from sqlalchemy.orm import mapped_column
+
+
+class CatalogSourceKind(enum.StrEnum):
+    retail_shop = "retail_shop"
+    manufacturer = "manufacturer"
+    both = "both"
+
 
 Money = NewType("Money", Decimal)
 Weight = NewType("Weight", Decimal)

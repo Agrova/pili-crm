@@ -81,6 +81,16 @@ class WarehouseStockItem(Base, TimestampMixin):
         ),
         Index("ix_warehouse_stock_item_product_id", "product_id"),
         CheckConstraint("quantity >= 0", name="ck_warehouse_stock_item_quantity"),
+        Index(
+            "ix_warehouse_stock_item_price_calc_id",
+            "price_calculation_id",
+            postgresql_where=text("price_calculation_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_warehouse_stock_item_receipt_item_id",
+            "receipt_item_id",
+            postgresql_where=text("receipt_item_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
@@ -91,9 +101,57 @@ class WarehouseStockItem(Base, TimestampMixin):
     )
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
     location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price_calculation_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("pricing_price_calculation.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    receipt_item_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("warehouse_receipt_item.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     reservations: Mapped[list[WarehouseReservation]] = relationship(
         "WarehouseReservation", back_populates="stock_item"
+    )
+
+
+class WarehousePendingPriceResolution(Base):
+    """Conflict record: receipt arrived with a different price than existing stock.
+
+    Immutable — deleted (not updated) when operator resolves the conflict.
+    One pending record per receipt_item (UNIQUE constraint).
+    """
+
+    __tablename__ = "warehouse_pending_price_resolution"
+    __table_args__ = (
+        UniqueConstraint(
+            "receipt_item_id", name="uq_warehouse_pending_receipt_item"
+        ),
+        Index("ix_warehouse_pending_existing_stock", "existing_stock_item_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    receipt_item_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("warehouse_receipt_item.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    existing_stock_item_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("warehouse_stock_item.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    new_price_calculation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("pricing_price_calculation.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
     )
 
 

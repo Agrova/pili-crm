@@ -48,13 +48,28 @@ def test_no_cross_module_relationships() -> None:
     )
 
 
+_IMMUTABLE_MODELS: frozenset[str] = frozenset({
+    # Append-only price history — updated_at intentionally absent (ADR-007)
+    "CatalogListingPrice",
+    # Immutable conflict record — deleted on resolution, never updated (ADR-008)
+    "WarehousePendingPriceResolution",
+})
+
+
 def test_all_models_have_timestamps() -> None:
-    """Every mapped table must have created_at and updated_at columns (TimestampMixin)."""
+    """Every mapped table must have created_at and updated_at (TimestampMixin).
+
+    Immutable (append-only) tables are exempt from updated_at and listed in
+    _IMMUTABLE_MODELS; they still require created_at.
+    """
     missing: list[str] = []
     for mapper in Base.registry.mappers:
         cls = mapper.class_
         col_names = {col.key for col in mapper.columns}
-        if "created_at" not in col_names or "updated_at" not in col_names:
+        if cls.__name__ in _IMMUTABLE_MODELS:
+            if "created_at" not in col_names:
+                missing.append(f"{cls.__name__} (missing created_at)")
+        elif "created_at" not in col_names or "updated_at" not in col_names:
             missing.append(cls.__name__)
     assert missing == [], (
         "Models missing created_at / updated_at (TimestampMixin not applied):\n"

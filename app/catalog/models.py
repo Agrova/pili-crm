@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import enum
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     Identity,
     Index,
@@ -22,6 +25,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.shared.base_model import Base, TimestampMixin
+from app.shared.types import CatalogSourceKind, currency_column
 
 # References pricing_purchase_type enum without cross-module Python import
 _PRICING_PURCHASE_TYPE_ENUM = SAEnum(
@@ -33,6 +37,13 @@ class CatalogAttributeSource(enum.StrEnum):
     manual = "manual"
     parsed = "parsed"
     supplier = "supplier"
+
+
+class CatalogPriceSource(enum.StrEnum):
+    manual = "manual"
+    parsed = "parsed"
+    email = "email"
+    purchase = "purchase"
 
 
 class CatalogSupplier(Base, TimestampMixin):
@@ -49,23 +60,20 @@ class CatalogSupplier(Base, TimestampMixin):
     default_purchase_type: Mapped[str | None] = mapped_column(
         _PRICING_PURCHASE_TYPE_ENUM, nullable=True
     )
+    kind: Mapped[CatalogSourceKind] = mapped_column(
+        SAEnum(CatalogSourceKind, name="catalog_source_kind"),
+        nullable=False,
+        server_default="both",
+    )
 
-    products: Mapped[list[CatalogProduct]] = relationship(
-        "CatalogProduct", back_populates="supplier"
+    listings: Mapped[list[CatalogProductListing]] = relationship(
+        "CatalogProductListing", back_populates="source"
     )
 
 
 class CatalogProduct(Base, TimestampMixin):
     __tablename__ = "catalog_product"
     __table_args__ = (
-        Index(
-            "uq_catalog_product_supplier_sku",
-            "supplier_id",
-            "sku",
-            unique=True,
-            postgresql_where=text("sku IS NOT NULL"),
-        ),
-        Index("ix_catalog_product_supplier_id", "supplier_id"),
         Index("ix_catalog_product_category", "category"),
         CheckConstraint(
             "declared_weight > 0 OR declared_weight IS NULL",
@@ -78,11 +86,6 @@ class CatalogProduct(Base, TimestampMixin):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
-    supplier_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey("catalog_supplier.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
     sku: Mapped[str | None] = mapped_column(Text, nullable=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -90,11 +93,11 @@ class CatalogProduct(Base, TimestampMixin):
     actual_weight: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
     photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    supplier: Mapped[CatalogSupplier] = relationship(
-        "CatalogSupplier", back_populates="products"
-    )
     attributes: Mapped[list[CatalogProductAttribute]] = relationship(
         "CatalogProductAttribute", back_populates="product"
+    )
+    listings: Mapped[list[CatalogProductListing]] = relationship(
+        "CatalogProductListing", back_populates="product"
     )
 
 
@@ -122,4 +125,90 @@ class CatalogProductAttribute(Base, TimestampMixin):
 
     product: Mapped[CatalogProduct] = relationship(
         "CatalogProduct", back_populates="attributes"
+    )
+
+
+class CatalogProductListing(Base, TimestampMixin):
+    __tablename__ = "catalog_product_listing"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id", "source_id", name="uq_catalog_product_listing_product_source"
+        ),
+        Index(
+            "uq_catalog_product_listing_primary",
+            "product_id",
+            unique=True,
+            postgresql_where=text("is_primary = true"),
+        ),
+        Index("ix_catalog_product_listing_product_id", "product_id"),
+        Index("ix_catalog_product_listing_source_id", "source_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    product_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("catalog_product.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("catalog_supplier.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sku_at_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    product: Mapped[CatalogProduct] = relationship(
+        "CatalogProduct", back_populates="listings"
+    )
+    source: Mapped[CatalogSupplier] = relationship(
+        "CatalogSupplier", back_populates="listings"
+    )
+    prices: Mapped[list[CatalogListingPrice]] = relationship(
+        "CatalogListingPrice", back_populates="listing"
+    )
+
+
+class CatalogListingPrice(Base):
+    __tablename__ = "catalog_listing_price"
+    __table_args__ = (
+        CheckConstraint("price >= 0", name="ck_catalog_listing_price_price"),
+        CheckConstraint(
+            "currency ~ '^[A-Z]{3}$'", name="ck_catalog_listing_price_currency"
+        ),
+        Index(
+            "ix_catalog_listing_price_listing_observed",
+            text("listing_id"),
+            text("observed_at DESC"),
+        ),
+        Index("ix_catalog_listing_price_source", "source"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    listing_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("catalog_product_listing.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    price: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    currency: Mapped[str] = currency_column(nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[CatalogPriceSource] = mapped_column(
+        SAEnum(CatalogPriceSource, name="catalog_price_source"),
+        nullable=False,
+    )
+    source_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+    listing: Mapped[CatalogProductListing] = relationship(
+        "CatalogProductListing", back_populates="prices"
     )

@@ -388,6 +388,33 @@ def calculate_manufacturer_price(
 
 
 # ---------------------------------------------------------------------------
+# Weighted average price (ADR-008 — Package 3 resolution helper)
+# ---------------------------------------------------------------------------
+
+
+def calculate_weighted_price(
+    existing_quantity: Decimal,
+    existing_price: Decimal,
+    new_quantity: Decimal,
+    new_price: Decimal,
+) -> Decimal:
+    """Weighted average of two price tiers by quantity.
+
+    Returns (existing_qty × existing_price + new_qty × new_price) / total_qty,
+    quantized to 2 decimal places (ROUND_HALF_UP).
+
+    Raises ValueError when total_quantity == 0.
+    """
+    total = existing_quantity + new_quantity
+    if total == _ZERO:
+        raise ValueError("total_quantity must be > 0")
+    raw = (
+        existing_quantity * existing_price + new_quantity * new_price
+    ) / total
+    return raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+# ---------------------------------------------------------------------------
 # Order-level discount allocation
 # ---------------------------------------------------------------------------
 
