@@ -148,6 +148,12 @@ class CommunicationsTelegramMessage(Base, TimestampMixin):
         ),
         Index("ix_communications_telegram_message_chat_id", "chat_id"),
         Index("ix_communications_telegram_message_sent_at", "sent_at"),
+        Index(
+            "ix_telegram_message_reply_to",
+            "chat_id",
+            "reply_to_telegram_message_id",
+            postgresql_where=text("reply_to_telegram_message_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
@@ -161,6 +167,7 @@ class CommunicationsTelegramMessage(Base, TimestampMixin):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     text: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    reply_to_telegram_message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     chat: Mapped[CommunicationsTelegramChat] = relationship(
         "CommunicationsTelegramChat", back_populates="messages"
