@@ -15,8 +15,16 @@ async def _first_product_id(s: AsyncSession) -> int:
 
 
 async def _first_supplier_id(s: AsyncSession) -> int:
+    # Must be a supplier that actually has listings so ON DELETE RESTRICT fires.
+    # (After ADR-011 the seed 'Unknown (auto)' has no listings.)
     return (
-        await s.execute(text("SELECT id FROM catalog_supplier LIMIT 1"))
+        await s.execute(
+            text(
+                "SELECT id FROM catalog_supplier "
+                "WHERE id IN (SELECT source_id FROM catalog_product_listing) "
+                "ORDER BY id LIMIT 1"
+            )
+        )
     ).scalar_one()
 
 
