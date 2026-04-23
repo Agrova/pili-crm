@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "crm-mcp"
+version = "0.1.0"
+description = "MCP server for ПилиСтрогай CRM (stdio transport, read-only)"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+crm-mcp = "server:main"
+
+[tool.setuptools]
+py-modules = ["server", "db", "test_tools"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tools*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["B008"]
