@@ -6,6 +6,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Register all models so their tables appear in Base.metadata
+import app.analysis.models  # noqa: F401
 import app.catalog.models  # noqa: F401
 import app.communications.models  # noqa: F401
 import app.finance.models  # noqa: F401

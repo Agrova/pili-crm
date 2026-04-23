@@ -2,7 +2,7 @@
 
 Полная карта сущностей зафиксирована в ADR-003 (секция «Карта таблиц по модулям»).
 
-26 таблиц, разбитых по 7 модулям с таблицами:
+30 таблиц, разбитых по 8 модулям с таблицами:
 
 | Модуль | Таблицы |
 |---|---|
@@ -13,8 +13,10 @@
 | `pricing` | pricing_exchange_rate, pricing_price_calculation |
 | `communications` | communications_email_thread, communications_email_message, communications_telegram_chat, communications_telegram_message, communications_link |
 | `finance` | finance_ledger_entry, finance_expense, finance_tax_entry, finance_exchange_operation, finance_exchange_rate |
+| `analysis` | analysis_chat_analysis, analysis_chat_analysis_state, analysis_pending_order_item, analysis_created_entities |
 
 Модуль `api` таблиц не имеет.
 
 Статусы заказов и позиций — ADR-003 Addendum.
 Расширения схемы (pricing, orders, catalog) — ADR-004.
+Модуль `analysis` — ADR-011 (LLM-пайплайн анализа Telegram-переписки).

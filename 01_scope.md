@@ -27,6 +27,9 @@
 | Telegram profile schema — миграция (ADR-009) | Prompt Factory for Claude Code |
 | Reply column + media metadata (ADR-010 addendum) | Prompt Factory for Claude Code |
 | Telegram historical import (ADR-010 Задание 1) | Prompt Factory for Claude Code |
+| Ревизия untracked-файлов в рабочем дереве (9 коммитов, `e8d8773..c2ed6b3`) | Prompt Factory for Claude Code |
+| MCP-tools очереди модерации Telegram-чатов (ADR-010 Задание 2) | Prompt Factory for Claude Code |
+| Analysis module schema — миграция (ADR-011 Задача 1) | Prompt Factory for Claude Code |
 
 ---
 
@@ -34,7 +37,7 @@
 
 | Задача | Чат | Приоритет |
 |---|---|---|
-| Ревизия untracked-файлов в рабочем дереве (блокер для Задания 2 ADR-010) | Prompt Factory for Claude Code | high |
+| — | — | — |
 
 ---
 
@@ -42,9 +45,11 @@
 
 | Задача | Чат | Приоритет |
 |---|---|---|
-| ADR-010 Задание 2 — MCP-tools `get_unreviewed_chats` + `link_chat_to_customer` | Prompt Factory for Claude Code | high (после ревизии untracked) |
-| ADR-010 Задание 3 — `tg_incremental.py` + launchd | Prompt Factory for Claude Code | medium |
+| Реальная заливка Telegram-выгрузки + обкатка Заданий 1+2 ADR-010 | Оператор (без Claude Code) | high |
+| ADR-010 Задание 3 — `tg_incremental.py` через Telethon + launchd plist | Prompt Factory for Claude Code | medium |
+| Системный промт Cowork — обновление под 11 tools (включая очередь модерации) | Архитектурный штаб | medium (после обкатки) |
 | ADR-007/008 Пакет 3 — MCP-tools для разрешения ценовых конфликтов | Prompt Factory for Claude Code | medium |
+| Admin-tool для мержа дублирующихся клиентов (при первой коллизии telegram_id) | Prompt Factory for Claude Code | low (при появлении) |
 | Gmail ingestion | — (назначит главный архитектор) | medium |
 | Finance ledger | — | medium |
 | Technical debt: mypy cleanup, ревизия ручного status в create_order, conftest для изолированных тестов | Prompt Factory for Claude Code | medium |
