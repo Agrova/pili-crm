@@ -1,0 +1,47 @@
+{
+  "about": "Test export — non-personal filter test",
+  "chats": {
+    "list": [
+      {
+        "name": "Ivan Petrov",
+        "type": "personal_chat",
+        "id": 111111,
+        "messages": [
+          {
+            "id": 1,
+            "type": "message",
+            "date": "2024-01-01T10:00:00",
+            "date_unixtime": "1704103200",
+            "from": "Ivan",
+            "from_id": "user111111",
+            "text": "Привет",
+            "text_entities": [{"type": "plain", "text": "Привет"}]
+          }
+        ]
+      },
+      {
+        "name": "Personal Group",
+        "type": "private_group",
+        "id": 222222,
+        "messages": [
+          {
+            "id": 1,
+            "type": "message",
+            "date": "2024-01-01T10:00:00",
+            "date_unixtime": "1704103200",
+            "from": "Someone",
+            "from_id": "user333333",
+            "text": "Group message",
+            "text_entities": []
+          }
+        ]
+      },
+      {
+        "name": "Saved Messages",
+        "type": "saved_messages",
+        "id": 0,
+        "messages": []
+      }
+    ]
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "about": "Test export — 2 personal chats × 3 messages",
+  "chats": {
+    "list": [
+      {
+        "name": "Alice",
+        "type": "personal_chat",
+        "id": 100001,
+        "messages": [
+          {
+            "id": 1,
+            "type": "message",
+            "date": "2024-01-01T10:00:00",
+            "date_unixtime": "1704103200",
+            "from": "Alice",
+            "from_id": "user100001",
+            "text": "Привет!",
+            "text_entities": [{"type": "plain", "text": "Привет!"}]
+          },
+          {
+            "id": 2,
+            "type": "message",
+            "date": "2024-01-02T10:00:00",
+            "date_unixtime": "1704189600",
+            "from": "Me",
+            "from_id": "user999999",
+            "text": "Всё хорошо",
+            "text_entities": [{"type": "plain", "text": "Всё хорошо"}]
+          },
+          {
+            "id": 3,
+            "type": "message",
+            "date": "2024-01-03T10:00:00",
+            "date_unixtime": "1704276000",
+            "from": "Alice",
+            "from_id": "user100001",
+            "text": "Договорились",
+            "text_entities": [{"type": "plain", "text": "Договорились"}]
+          }
+        ]
+      },
+      {
+        "name": "Bob",
+        "type": "personal_chat",
+        "id": 200002,
+        "messages": [
+          {
+            "id": 10,
+            "type": "message",
+            "date": "2024-02-01T10:00:00",
+            "date_unixtime": "1706781600",
+            "from": "Bob",
+            "from_id": "user200002",
+            "text": "Добрый день",
+            "text_entities": [{"type": "plain", "text": "Добрый день"}]
+          },
+          {
+            "id": 11,
+            "type": "message",
+            "date": "2024-02-02T10:00:00",
+            "date_unixtime": "1706868000",
+            "from": "Me",
+            "from_id": "user999999",
+            "text": "Здравствуйте",
+            "text_entities": [{"type": "plain", "text": "Здравствуйте"}]
+          },
+          {
+            "id": 12,
+            "type": "message",
+            "date": "2024-02-03T10:00:00",
+            "date_unixtime": "1706954400",
+            "from": "Bob",
+            "from_id": "user200002",
+            "text": "Спасибо",
+            "text_entities": [{"type": "plain", "text": "Спасибо"}]
+          }
+        ]
+      }
+    ]
+  }
+}

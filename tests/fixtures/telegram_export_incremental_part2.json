@@ -1,0 +1,24 @@
+{
+  "about": "Test export — incremental part 2, message ids 1–10",
+  "chats": {
+    "list": [
+      {
+        "name": "Charlie",
+        "type": "personal_chat",
+        "id": 300003,
+        "messages": [
+          {"id": 1,  "type": "message", "date": "2024-01-01T10:00:00", "date_unixtime": "1704103200", "from": "Charlie", "from_id": "user300003", "text": "msg 1",  "text_entities": []},
+          {"id": 2,  "type": "message", "date": "2024-01-02T10:00:00", "date_unixtime": "1704189600", "from": "Charlie", "from_id": "user300003", "text": "msg 2",  "text_entities": []},
+          {"id": 3,  "type": "message", "date": "2024-01-03T10:00:00", "date_unixtime": "1704276000", "from": "Charlie", "from_id": "user300003", "text": "msg 3",  "text_entities": []},
+          {"id": 4,  "type": "message", "date": "2024-01-04T10:00:00", "date_unixtime": "1704362400", "from": "Charlie", "from_id": "user300003", "text": "msg 4",  "text_entities": []},
+          {"id": 5,  "type": "message", "date": "2024-01-05T10:00:00", "date_unixtime": "1704448800", "from": "Charlie", "from_id": "user300003", "text": "msg 5",  "text_entities": []},
+          {"id": 6,  "type": "message", "date": "2024-01-06T10:00:00", "date_unixtime": "1704535200", "from": "Charlie", "from_id": "user300003", "text": "msg 6",  "text_entities": []},
+          {"id": 7,  "type": "message", "date": "2024-01-07T10:00:00", "date_unixtime": "1704621600", "from": "Charlie", "from_id": "user300003", "text": "msg 7",  "text_entities": []},
+          {"id": 8,  "type": "message", "date": "2024-01-08T10:00:00", "date_unixtime": "1704708000", "from": "Charlie", "from_id": "user300003", "text": "msg 8",  "text_entities": []},
+          {"id": 9,  "type": "message", "date": "2024-01-09T10:00:00", "date_unixtime": "1704794400", "from": "Charlie", "from_id": "user300003", "text": "msg 9",  "text_entities": []},
+          {"id": 10, "type": "message", "date": "2024-01-10T10:00:00", "date_unixtime": "1704880800", "from": "Charlie", "from_id": "user300003", "text": "msg 10", "text_entities": []}
+        ]
+      }
+    ]
+  }
+}

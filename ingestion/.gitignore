@@ -1,0 +1,3 @@
+# Telethon session files (Phase 2, Task 3 ADR-010)
+*.session
+*.session-journal
