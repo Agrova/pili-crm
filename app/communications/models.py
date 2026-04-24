@@ -23,6 +23,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.shared.base_model import Base, TimestampMixin
 
+TELEGRAM_ACCOUNT_PHONE_E164_REGEX = r"^\+[1-9]\d{7,14}$"
+
 
 class TelegramChatReviewStatus(enum.StrEnum):
     """Operator review status for Telegram chats imported via ADR-010 ingestion.
@@ -101,12 +103,52 @@ class CommunicationsEmailMessage(Base, TimestampMixin):
     )
 
 
+class CommunicationsTelegramAccount(Base, TimestampMixin):
+    """Registry of operator Telegram accounts (ADR-012).
+
+    Each chat belongs to exactly one account; `telegram_chat_id` is only unique
+    per-account because Telegram generates chat ids independently in each
+    account.
+    """
+
+    __tablename__ = "communications_telegram_account"
+    __table_args__ = (
+        UniqueConstraint(
+            "phone_number", name="uq_communications_telegram_account_phone"
+        ),
+        CheckConstraint(
+            f"phone_number ~ '{TELEGRAM_ACCOUNT_PHONE_E164_REGEX}'",
+            name="ck_communications_telegram_account_phone_e164",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    phone_number: Mapped[str] = mapped_column(Text, nullable=False)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    telegram_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_import_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_import_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    chats: Mapped[list[CommunicationsTelegramChat]] = relationship(
+        "CommunicationsTelegramChat", back_populates="owner_account"
+    )
+
+
+TelegramAccount = CommunicationsTelegramAccount
+
+
 class CommunicationsTelegramChat(Base, TimestampMixin):
     __tablename__ = "communications_telegram_chat"
     __table_args__ = (
         UniqueConstraint(
+            "owner_account_id",
             "telegram_chat_id",
-            name="uq_communications_telegram_chat_telegram_chat_id",
+            name="uq_communications_telegram_chat_owner_telegram_chat_id",
         ),
         # ADR-009: partial index powers the moderation queue query
         # (WHERE review_status = 'unreviewed')
@@ -118,6 +160,11 @@ class CommunicationsTelegramChat(Base, TimestampMixin):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    owner_account_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("communications_telegram_account.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     telegram_chat_id: Mapped[str] = mapped_column(Text, nullable=False)
     chat_type: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -133,6 +180,9 @@ class CommunicationsTelegramChat(Base, TimestampMixin):
         nullable=True,
     )
 
+    owner_account: Mapped[CommunicationsTelegramAccount] = relationship(
+        "CommunicationsTelegramAccount", back_populates="chats"
+    )
     messages: Mapped[list[CommunicationsTelegramMessage]] = relationship(
         "CommunicationsTelegramMessage", back_populates="chat"
     )

@@ -98,8 +98,9 @@ async def _insert_chat(
         row = await conn.execute(
             text(
                 "INSERT INTO communications_telegram_chat"
-                " (telegram_chat_id, chat_type, title, review_status)"
-                " VALUES (:tg, 'personal_chat', :title,"
+                " (owner_account_id, telegram_chat_id, chat_type, title,"
+                "  review_status)"
+                " VALUES (1, :tg, 'personal_chat', :title,"
                 "         CAST(:rs AS telegram_chat_review_status))"
                 " RETURNING id"
             ),
