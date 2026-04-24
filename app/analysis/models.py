@@ -140,6 +140,12 @@ class AnalysisCreatedEntity(Base, TimestampMixin):
             "ix_analysis_created_entities_source_chat_id",
             "source_chat_id",
         ),
+        # ADR-011 Task 2: analyzer rows must reference a chat so bulk
+        # rollback by (analyzer_version, source_chat_id) is possible.
+        CheckConstraint(
+            "created_by <> 'analyzer' OR source_chat_id IS NOT NULL",
+            name="ck_analysis_created_entities_analyzer_requires_chat",
+        ),
     )
 
     id: Mapped[int] = mapped_column(
