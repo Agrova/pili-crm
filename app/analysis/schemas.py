@@ -103,3 +103,31 @@ class StructuredExtract(BaseModel):
     incidents: list[Incident] | None = None
     orders: list[Order] | None = None
     payments: list[Payment] | None = None
+
+
+# === Preflight classification schemas (ADR-013) ===
+
+
+PreflightClass = Literal[
+    "client",
+    "possible_client",
+    "not_client",
+    "family",
+    "friend",
+    "service",
+    "empty",
+]
+
+PreflightConfidence = Literal["low", "medium", "high"]
+
+SkippedReason = Literal["not_client", "empty"]
+
+
+class PreflightClassification(BaseModel):
+    """Qwen preflight verdict — decides whether full analysis runs (ADR-013)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    classification: PreflightClass
+    confidence: PreflightConfidence
+    reason: str

@@ -31,6 +31,7 @@
 | MCP-tools очереди модерации Telegram-чатов (ADR-010 Задание 2) | Prompt Factory for Claude Code |
 | Analysis module schema — миграция (ADR-011 Задача 1) | Prompt Factory for Claude Code |
 | Multi-account Telegram support — миграция и сервис (ADR-012 Задача 1) | Prompt Factory for Claude Code |
+| Preflight classification schema — миграция (ADR-013 Задача 1) | Prompt Factory for Claude Code |
 
 ---
 

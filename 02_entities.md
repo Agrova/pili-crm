@@ -20,3 +20,4 @@
 Статусы заказов и позиций — ADR-003 Addendum.
 Расширения схемы (pricing, orders, catalog) — ADR-004.
 Модуль `analysis` — ADR-011 (LLM-пайплайн анализа Telegram-переписки).
+`analysis_chat_analysis` — +4 поля для preflight по ADR-013 (`preflight_classification`, `preflight_confidence`, `preflight_reason`, `skipped_reason`) + CHECK `ck_analysis_chat_analysis_skipped_consistency`.

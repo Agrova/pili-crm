@@ -42,6 +42,12 @@ class AnalysisChatAnalysis(Base, TimestampMixin):
         ),
         Index("ix_analysis_chat_analysis_chat_id", "chat_id"),
         Index("ix_analysis_chat_analysis_analyzed_at", "analyzed_at"),
+        CheckConstraint(
+            "skipped_reason IS NULL "
+            "OR (narrative_markdown = '' "
+            "AND structured_extract = '{\"_v\": 1}'::jsonb)",
+            name="ck_analysis_chat_analysis_skipped_consistency",
+        ),
     )
 
     id: Mapped[int] = mapped_column(
@@ -60,6 +66,10 @@ class AnalysisChatAnalysis(Base, TimestampMixin):
     narrative_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     structured_extract: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     chunks_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    preflight_classification: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preflight_confidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preflight_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    skipped_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AnalysisChatAnalysisState(Base, TimestampMixin):
