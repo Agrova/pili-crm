@@ -129,10 +129,16 @@ class OrdersCustomerProfile(Base, TimestampMixin):
     )
     addresses: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # ADR-009: structured profile facts extracted from Telegram conversations
-    preferences: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    delivery_preferences: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    incidents: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # ADR-009 + ADR-011: structured profile facts extracted from Telegram
+    # conversations. All three are JSONB *arrays* — `preferences` and
+    # `incidents` per ADR-009 §structure; `delivery_preferences` per ADR-011
+    # §apply (analyzer overwrites wholesale with `is_primary=false` entries,
+    # operator promotes one to `is_primary=true` during verification).
+    preferences: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    delivery_preferences: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    incidents: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
 
     customer: Mapped[OrdersCustomer] = relationship(
         "OrdersCustomer", back_populates="profile"

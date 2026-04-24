@@ -12,9 +12,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analysis.exceptions import MultipleCustomersForChatError
 from app.communications import repository
+from app.communications.models import (
+    CommunicationsLink,
+    CommunicationsLinkTargetModule,
+    CommunicationsTelegramMessage,
+)
 from app.communications.schemas import (
     TelegramAccountCreate,
     TelegramAccountRead,
@@ -73,6 +80,41 @@ async def update_account_timestamps(
         telegram_user_id=telegram_user_id,
     )
     await session.commit()
+
+
+async def get_customer_for_chat(
+    session: AsyncSession, chat_id: int
+) -> int | None:
+    """Return the customer id a chat is linked to, or ``None`` if no link.
+
+    Links live on messages (ADR-003 / ADR-010): the join chases
+    ``communications_link`` rows with
+    ``target_module='orders'`` / ``target_entity='orders_customer'`` back
+    through ``communications_telegram_message`` to the chat.
+
+    Raises ``MultipleCustomersForChatError`` when ≥2 distinct customer ids
+    link to the same chat — callers in ``app/analysis/service.py`` catch
+    this and surface the ids via ``AnalysisApplicationResult``.
+    """
+    stmt = (
+        select(CommunicationsLink.target_id)
+        .join(
+            CommunicationsTelegramMessage,
+            CommunicationsTelegramMessage.id == CommunicationsLink.telegram_message_id,
+        )
+        .where(
+            CommunicationsTelegramMessage.chat_id == chat_id,
+            CommunicationsLink.target_module == CommunicationsLinkTargetModule.orders,
+            CommunicationsLink.target_entity == "orders_customer",
+        )
+        .distinct()
+    )
+    ids = [int(row) for row in (await session.execute(stmt)).scalars()]
+    if not ids:
+        return None
+    if len(ids) > 1:
+        raise MultipleCustomersForChatError(chat_id=chat_id, customer_ids=ids)
+    return ids[0]
 
 
 async def list_chats_by_customer(
