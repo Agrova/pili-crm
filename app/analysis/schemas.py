@@ -17,7 +17,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _Config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -131,3 +131,63 @@ class PreflightClassification(BaseModel):
     classification: PreflightClass
     confidence: PreflightConfidence
     reason: str
+
+
+# === Matched extract — output of catalog matching pass (ADR-011 §5) ===
+#
+# ``MatchedStructuredExtract`` is the shape of ``structured_extract`` *after*
+# the catalog-matching pass has decorated every order item with its matching
+# verdict. It is the payload consumed by ``apply_analysis_to_customer``.
+
+MatchingStatus = Literal["confident_match", "ambiguous", "not_found"]
+
+
+class ProductCandidate(BaseModel):
+    model_config = _Config
+
+    product_id: int
+    confidence_note: str
+
+
+class MatchedOrderItem(OrderItem):
+    """``OrderItem`` annotated with catalog-matching result."""
+
+    matching_status: MatchingStatus
+    matched_product_id: int | None = None
+    candidates: list[ProductCandidate] | None = None
+    not_found_reason: str | None = None
+
+    # pydantic forbid-extra + populate_by_name model_config is inherited.
+
+    @model_validator(mode="after")
+    def _validate_matching_fields(self) -> MatchedOrderItem:
+        if (
+            self.matching_status == "confident_match"
+            and self.matched_product_id is None
+        ):
+            raise ValueError(
+                "matched_product_id is required when "
+                "matching_status='confident_match'"
+            )
+        if self.matching_status == "ambiguous" and not self.candidates:
+            raise ValueError(
+                "candidates must be non-empty when "
+                "matching_status='ambiguous'"
+            )
+        # 'not_found' leaves not_found_reason optional (recommended but not
+        # required — ADR-011 Task 2 TZ §MatchedStructuredExtract).
+        return self
+
+
+class MatchedOrder(Order):
+    items: list[MatchedOrderItem] | None = None  # type: ignore[assignment]
+
+
+class MatchedStructuredExtract(StructuredExtract):
+    """Extract with every order item annotated by catalog matching.
+
+    ``orders`` overrides the base-class annotation to carry
+    ``MatchedOrder`` (which in turn carries ``MatchedOrderItem``).
+    """
+
+    orders: list[MatchedOrder] | None = None  # type: ignore[assignment]
