@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -117,3 +117,12 @@ async def list_chats_by_customer(
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def count_messages_in_chat(session: AsyncSession, chat_id: int) -> int:
+    result = await session.execute(
+        select(func.count(CommunicationsTelegramMessage.id)).where(
+            CommunicationsTelegramMessage.chat_id == chat_id
+        )
+    )
+    return int(result.scalar_one())

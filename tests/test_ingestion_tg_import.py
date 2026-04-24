@@ -1,10 +1,8 @@
-"""Tests for ingestion/parser.py (1–8) and ingestion/tg_import.py (9–15).
+"""Tests for ingestion/parser.py (1–8) and ingestion/tg_import.py (9–15 + collision).
 
 Parser tests (1–8) are pure-Python and always run. DB-writing tests invoke
-`run_import()`, which after ADR-012 Task 1 (multi-account schema) can no
-longer INSERT into `communications_telegram_chat` without `owner_account_id`.
-They are marked `skip` until ADR-012 Task 2 updates `ingestion/tg_import.py`
-with account autodetect + `owner_account_id` passthrough.
+`run_import()` with an explicit `owner_account_id` (ADR-012 multi-account).
+The Kazakh seed account (id=1) is provided by the ADR-012 Task 1 migration.
 """
 
 from __future__ import annotations
@@ -22,9 +20,8 @@ from app.config import settings
 from ingestion.parser import parse_export, parse_message
 from ingestion.tg_import import MESSAGE_INSERT_BATCH_SIZE, run_import
 
-_SKIP_UNTIL_ADR012_TASK2 = pytest.mark.skip(
-    reason="ADR-012 Task 2 pending: tg_import.py needs owner_account_id passthrough"
-)
+KAZAKH_ACCOUNT_ID = 1  # seeded by the ADR-012 Task 1 migration
+RUSSIAN_PHONE_E164 = "+79161879839"
 
 
 def _make_export_json(
@@ -268,7 +265,12 @@ async def telegram_engine() -> AsyncIterator[AsyncEngine]:
 
 @pytest.fixture
 async def clean_telegram(telegram_engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
-    """Truncate telegram tables before and after each integration test."""
+    """Truncate telegram tables before and after each integration test.
+
+    The account registry (communications_telegram_account) is left alone so
+    that the Kazakh seed (id=1) remains available. Ad-hoc test accounts
+    (e.g. the Russian collision-test account) clean up after themselves.
+    """
 
     async def _delete() -> None:
         async with telegram_engine.begin() as conn:
@@ -280,14 +282,69 @@ async def clean_telegram(telegram_engine: AsyncEngine) -> AsyncIterator[AsyncEng
     await _delete()
 
 
+@pytest.fixture
+async def russian_account_id(
+    clean_telegram: AsyncEngine,
+) -> AsyncIterator[int]:
+    """Create a second Telegram account for the collision test; drop it after."""
+    async with clean_telegram.begin() as conn:
+        row = (
+            await conn.execute(
+                text(
+                    "INSERT INTO communications_telegram_account "
+                    "(phone_number, display_name, notes) "
+                    "VALUES (:p, :d, :n) RETURNING id"
+                ),
+                {
+                    "p": RUSSIAN_PHONE_E164,
+                    "d": "Россия (test)",
+                    "n": "collision test",
+                },
+            )
+        ).first()
+        assert row is not None
+        account_id = int(row[0])
+    try:
+        yield account_id
+    finally:
+        # FK communications_telegram_chat.owner_account_id is ON DELETE RESTRICT,
+        # so purge this account's chats (and their messages) before deleting it.
+        async with clean_telegram.begin() as conn:
+            await conn.execute(
+                text(
+                    "DELETE FROM communications_telegram_message "
+                    "WHERE chat_id IN ("
+                    "  SELECT id FROM communications_telegram_chat "
+                    "  WHERE owner_account_id = :i"
+                    ")"
+                ),
+                {"i": account_id},
+            )
+            await conn.execute(
+                text(
+                    "DELETE FROM communications_telegram_chat "
+                    "WHERE owner_account_id = :i"
+                ),
+                {"i": account_id},
+            )
+            await conn.execute(
+                text(
+                    "DELETE FROM communications_telegram_account WHERE id = :i"
+                ),
+                {"i": account_id},
+            )
+
+
 # ─── 9 ── first run: creates chats and messages ───────────────────────────────
 
 
-@_SKIP_UNTIL_ADR012_TASK2
 async def test_import_first_run_creates_chats_and_messages(
     clean_telegram: AsyncEngine,
 ) -> None:
-    result = await run_import(FIXTURES / "telegram_export_minimal.json")
+    result = await run_import(
+        FIXTURES / "telegram_export_minimal.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
 
     assert result.chats_total == 2
     assert result.chats_new == 2
@@ -335,10 +392,15 @@ async def test_import_first_run_creates_chats_and_messages(
 # ─── 10 ── second run: idempotent ────────────────────────────────────────────
 
 
-@_SKIP_UNTIL_ADR012_TASK2
 async def test_import_second_run_idempotent(clean_telegram: AsyncEngine) -> None:
-    await run_import(FIXTURES / "telegram_export_minimal.json")
-    r2 = await run_import(FIXTURES / "telegram_export_minimal.json")
+    await run_import(
+        FIXTURES / "telegram_export_minimal.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
+    r2 = await run_import(
+        FIXTURES / "telegram_export_minimal.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
 
     assert r2.chats_new == 0
     assert r2.chats_updated == 2
@@ -359,14 +421,19 @@ async def test_import_second_run_idempotent(clean_telegram: AsyncEngine) -> None
 # ─── 11 ── incremental: watermark advances correctly ─────────────────────────
 
 
-@_SKIP_UNTIL_ADR012_TASK2
 async def test_import_incremental(clean_telegram: AsyncEngine) -> None:
-    r1 = await run_import(FIXTURES / "telegram_export_incremental_part1.json")
+    r1 = await run_import(
+        FIXTURES / "telegram_export_incremental_part1.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
     assert r1.chats_new == 1
     assert r1.msgs_inserted == 5
     assert r1.chats_failed == 0
 
-    r2 = await run_import(FIXTURES / "telegram_export_incremental_part2.json")
+    r2 = await run_import(
+        FIXTURES / "telegram_export_incremental_part2.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
     # part2 has ids 1-10; watermark=5 after part1, so only 6-10 are new
     assert r2.chats_updated == 1
     assert r2.msgs_inserted == 5
@@ -409,7 +476,11 @@ async def test_dry_run_does_not_write_to_db(clean_telegram: AsyncEngine) -> None
             )
         ).scalar_one()
 
-    await run_import(FIXTURES / "telegram_export_minimal.json", dry_run=True)
+    await run_import(
+        FIXTURES / "telegram_export_minimal.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+        dry_run=True,
+    )
 
     async with clean_telegram.connect() as conn:
         chat_after = (
@@ -432,14 +503,13 @@ async def test_dry_run_does_not_write_to_db(clean_telegram: AsyncEngine) -> None
 # ─── 13 ── batching: 5 000-message chat imports without parameter-limit error ──
 
 
-@_SKIP_UNTIL_ADR012_TASK2
 async def test_import_large_chat_batching(
     clean_telegram: AsyncEngine, tmp_path: Path
 ) -> None:
     n = 5000
     json_path = _make_export_json(tmp_path, chat_id=500001, n_messages=n)
 
-    result = await run_import(json_path)
+    result = await run_import(json_path, owner_account_id=KAZAKH_ACCOUNT_ID)
 
     assert result.chats_failed == 0
     assert result.chats_new == 1
@@ -458,15 +528,14 @@ async def test_import_large_chat_batching(
 # ─── 14 ── idempotency: second run on large chat inserts 0 extra rows ─────────
 
 
-@_SKIP_UNTIL_ADR012_TASK2
 async def test_import_large_chat_idempotent(
     clean_telegram: AsyncEngine, tmp_path: Path
 ) -> None:
     n = 5000
     json_path = _make_export_json(tmp_path, chat_id=500002, n_messages=n)
 
-    await run_import(json_path)
-    r2 = await run_import(json_path)
+    await run_import(json_path, owner_account_id=KAZAKH_ACCOUNT_ID)
+    r2 = await run_import(json_path, owner_account_id=KAZAKH_ACCOUNT_ID)
 
     assert r2.chats_failed == 0
     assert r2.msgs_inserted == 0
@@ -493,7 +562,6 @@ async def test_import_large_chat_idempotent(
         MESSAGE_INSERT_BATCH_SIZE + 1,
     ],
 )
-@_SKIP_UNTIL_ADR012_TASK2
 async def test_import_batch_boundary(
     clean_telegram: AsyncEngine, tmp_path: Path, n_messages: int
 ) -> None:
@@ -501,7 +569,7 @@ async def test_import_batch_boundary(
         tmp_path, chat_id=600000 + n_messages, n_messages=n_messages
     )
 
-    result = await run_import(json_path)
+    result = await run_import(json_path, owner_account_id=KAZAKH_ACCOUNT_ID)
 
     assert result.chats_failed == 0
     assert result.msgs_inserted == n_messages
@@ -514,3 +582,136 @@ async def test_import_batch_boundary(
         ).scalar_one()
 
     assert msg_count == n_messages
+
+
+# ─── 16 ── ADR-012 CRITICAL: same telegram_chat_id in two accounts ────────────
+
+
+async def test_two_chats_same_telegram_chat_id_different_accounts(
+    clean_telegram: AsyncEngine, russian_account_id: int, tmp_path: Path
+) -> None:
+    """Two chats with the same Telegram-level chat_id but in different
+    accounts must import as two independent rows (ADR-012 core invariant).
+    """
+    shared_tg_chat_id = 12345
+    kz_dir = tmp_path / "kz"
+    ru_dir = tmp_path / "ru"
+    kz_dir.mkdir()
+    ru_dir.mkdir()
+
+    json_a = _make_export_json(
+        kz_dir, chat_id=shared_tg_chat_id, title="Максим (KZ)", n_messages=3
+    )
+    json_b = _make_export_json(
+        ru_dir, chat_id=shared_tg_chat_id, title="Константин (RU)", n_messages=4
+    )
+
+    r_kz = await run_import(json_a, owner_account_id=KAZAKH_ACCOUNT_ID)
+    r_ru = await run_import(json_b, owner_account_id=russian_account_id)
+
+    assert r_kz.chats_new == 1
+    assert r_ru.chats_new == 1
+    assert r_kz.chats_failed == 0
+    assert r_ru.chats_failed == 0
+
+    async with clean_telegram.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT id, owner_account_id, title "
+                    "FROM communications_telegram_chat "
+                    "WHERE telegram_chat_id = :tcid "
+                    "ORDER BY owner_account_id"
+                ),
+                {"tcid": str(shared_tg_chat_id)},
+            )
+        ).all()
+        counts_per_chat = (
+            await conn.execute(
+                text(
+                    "SELECT c.owner_account_id, COUNT(m.id) "
+                    "FROM communications_telegram_chat c "
+                    "LEFT JOIN communications_telegram_message m ON m.chat_id = c.id "
+                    "WHERE c.telegram_chat_id = :tcid "
+                    "GROUP BY c.owner_account_id "
+                    "ORDER BY c.owner_account_id"
+                ),
+                {"tcid": str(shared_tg_chat_id)},
+            )
+        ).all()
+
+    assert len(rows) == 2, f"expected 2 chat rows, got {len(rows)}: {rows}"
+    owners = {r[1] for r in rows}
+    ids = {r[0] for r in rows}
+    titles = {r[2] for r in rows}
+    assert owners == {KAZAKH_ACCOUNT_ID, russian_account_id}
+    assert len(ids) == 2, "chat primary keys must differ"
+    assert titles == {"Максим (KZ)", "Константин (RU)"}
+
+    per_owner = {row[0]: row[1] for row in counts_per_chat}
+    assert per_owner[KAZAKH_ACCOUNT_ID] == 3
+    assert per_owner[russian_account_id] == 4
+
+
+# ─── 17 ── detect_account_phone / find_result_json (pure-python) ──────────────
+
+
+def test_detect_account_phone_flat(tmp_path: Path) -> None:
+    from ingestion.tg_import import detect_account_phone
+
+    account_dir = tmp_path / "+79161879839"
+    account_dir.mkdir()
+
+    phone, resolved = detect_account_phone(account_dir)
+    assert phone == "+79161879839"
+    assert resolved.resolve() == account_dir.resolve()
+
+
+def test_detect_account_phone_legacy_subdir(tmp_path: Path) -> None:
+    from ingestion.tg_import import detect_account_phone
+
+    account_dir = tmp_path / "+77471057849"
+    (account_dir / "DataExport_2026-04-11").mkdir(parents=True)
+
+    phone, resolved = detect_account_phone(
+        account_dir / "DataExport_2026-04-11"
+    )
+    assert phone == "+77471057849"
+    assert resolved.resolve() == account_dir.resolve()
+
+
+def test_detect_account_phone_missing_wrapper(tmp_path: Path) -> None:
+    from ingestion.tg_import import detect_account_phone
+
+    bad = tmp_path / "DataExport_2026-04-11"
+    bad.mkdir()
+
+    with pytest.raises(RuntimeError, match="E.164"):
+        detect_account_phone(bad)
+
+
+def test_find_result_json_prefers_flat(tmp_path: Path) -> None:
+    from ingestion.tg_import import find_result_json
+
+    account_dir = tmp_path / "+79161879839"
+    account_dir.mkdir()
+    flat = account_dir / "result.json"
+    flat.write_text("{}", encoding="utf-8")
+    legacy_dir = account_dir / "DataExport_2026-04-11"
+    legacy_dir.mkdir()
+    (legacy_dir / "result.json").write_text("{}", encoding="utf-8")
+
+    resolved = find_result_json(account_dir)
+    assert resolved == flat
+
+
+def test_find_result_json_legacy_fallback(tmp_path: Path) -> None:
+    from ingestion.tg_import import find_result_json
+
+    account_dir = tmp_path / "+77471057849"
+    (account_dir / "DataExport_2026-04-11").mkdir(parents=True)
+    legacy = account_dir / "DataExport_2026-04-11" / "result.json"
+    legacy.write_text("{}", encoding="utf-8")
+
+    resolved = find_result_json(account_dir)
+    assert resolved == legacy

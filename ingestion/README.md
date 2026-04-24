@@ -1,175 +1,203 @@
-# ingestion — Telegram Data Ingestion
+# ingestion — Telegram Data Ingestion (multi-account)
 
-Скрипты разового и инкрементального импорта переписки из личного Telegram-аккаунта
-в таблицы `communications_telegram_chat` / `communications_telegram_message`.
+Скрипты разового и инкрементального импорта переписки из Telegram-аккаунтов
+оператора в таблицы `communications_telegram_chat` / `communications_telegram_message`.
 
-Реализует **Фазу 1 (исторический импорт)** ADR-010.
-Фаза 2 (инкрементальный, Telethon) — Задание 3 ADR-010.
+Реализует **Фазу 1 (исторический импорт)** ADR-010 с расширением **ADR-012**
+(несколько аккаунтов). Фаза 2 (Telethon инкремент) — Задание 3 ADR-010.
+
+---
+
+## Структура папок на диске (ADR-012 §5)
+
+Корень: `/Users/protey/pili-crm-data/tg-exports/`.
+
+```
+/Users/protey/pili-crm-data/tg-exports/
+├── +77471057849/                    ← казахстанский аккаунт
+│   └── DataExport_2026-04-11/       ← legacy-структура (исходная выгрузка)
+│       ├── chats/
+│       ├── result.json
+│       └── ...
+└── +79161879839/                    ← российский аккаунт
+    ├── chats/                       ← плоская структура (новый стандарт)
+    ├── profile_pictures/
+    └── result.json
+```
+
+**Правила:**
+
+- Имя папки-аккаунта — `phone_number` в формате E.164 (`+77471057849`).
+- **Предпочтительная структура — плоская:** `result.json` и `chats/`
+  лежат прямо в `+PHONE/`, без промежуточной `DataExport_YYYY-MM-DD/`.
+- **Legacy-структура** (`+PHONE/DataExport_*/result.json`) — поддерживается
+  для уже существующих выгрузок. Скрипт берёт **самую свежую** `DataExport_*`,
+  если плоский `result.json` отсутствует.
+- **Одна выгрузка на аккаунт.** При обновлении — старое содержимое папки
+  заменяется новым (см. «Замена выгрузки»).
 
 ---
 
 ## Как сделать экспорт в Telegram Desktop
 
-1. Открой **Telegram Desktop** (macOS/Windows/Linux).
-2. В любом диалоге нажми **☰ → Settings → Advanced → Export Telegram data**.
-3. Настройки экспорта:
-   - **Account information** — можно включить (не влияет на импорт).
-   - **Personal chats** — **включить обязательно**.
-   - **Bot chats**, **Private groups**, **Private channels** — выключить
-     (скрипт их игнорирует, но включение увеличит объём и время экспорта).
-   - **Photos**, **Files**, **Videos** — включить, если нужны медиафайлы локально.
-     Без этого `relative_path` для медиа будет `null` в `raw_payload`.
-   - **Format: JSON** — **обязательно**. Machine-readable format.
-   - **Size limit** — оставить без ограничений.
-4. Нажми **Export** и дождись завершения.  
-   Для ~6 GB переписки экспорт занимает 10–30 минут в зависимости от скорости диска.
-5. По завершении Telegram Desktop предложит открыть папку.  
-   Путь по умолчанию:  
-   `~/Downloads/Telegram Desktop/DataExport_YYYY-MM-DD/`
-6. Убедись, что внутри папки есть файл `result.json`.  
-   Его размер для 300+ личных чатов — порядка 30–50 МБ (текст без медиа)
-   или несколько ГБ (с медиа).
+1. **Telegram Desktop → ☰ → Settings → Advanced → Export Telegram data**.
+2. Настройки:
+   - **Personal chats** — включить обязательно.
+   - **Bot chats / Private groups / Private channels** — выключить.
+   - **Photos / Files / Videos** — по необходимости.
+   - **Format: JSON** — обязательно.
+3. Положи содержимое выгрузки в **папку аккаунта** с E.164 именем —
+   напрямую (плоская структура). Пример:
+
+   ```bash
+   mkdir -p /Users/protey/pili-crm-data/tg-exports/+79161879839
+   cp -r ~/Downloads/Telegram\ Desktop/* \
+         /Users/protey/pili-crm-data/tg-exports/+79161879839/
+   ```
 
 ---
 
-## Что сделать после завершения экспорта
+## Рабочий процесс: первый импорт нового аккаунта
 
-Выполни шаги по порядку.
-
-### 1. Скопируй папку экспорта в рабочее место
+### Шаг 1. Зарегистрируй аккаунт в БД
 
 ```bash
-mkdir -p ~/pili-crm-data/tg-exports
-cp -r ~/Downloads/Telegram\ Desktop/DataExport_YYYY-MM-DD \
-      ~/pili-crm-data/tg-exports/
+python3 -m ingestion.register_account \
+  --phone +79161879839 \
+  --display-name "Россия (+79161879839)"
 ```
 
-Скрипт по умолчанию ищет последнюю папку `DataExport_*` в
-`~/pili-crm-data/tg-exports/`. Если оставить экспорт в `~/Downloads`,
-передавай путь явно через `--input-dir`.
+Exit 0 — аккаунт создан, exit 1 — номер уже зарегистрирован.
 
-### 2. Убедись, что PostgreSQL запущен
+### Шаг 2. Убедись, что PostgreSQL запущен
 
 ```bash
 docker-compose up -d postgres
-# проверка
 docker exec pili-crm-postgres-1 psql -U pili -d pili_crm -c "SELECT 1;"
 ```
 
-### 3. Dry-run — проверь, что будет импортировано
+### Шаг 3. Dry-run
 
 ```bash
+# Автодетект — если в ~/pili-crm-data/tg-exports ровно один аккаунт
 python3 -m ingestion.tg_import --dry-run
+
+# Или явно
+python3 -m ingestion.tg_import \
+  --input-dir /Users/protey/pili-crm-data/tg-exports/+79161879839/ --dry-run
 ```
 
-Вывод покажет список чатов и количество сообщений **без записи в БД**.
-Убедись, что количество чатов совпадает с ожидаемым (303 для текущего экспорта).
+Выводит список чатов и количество сообщений **без записи в БД**.
 
-### 4. Запусти импорт
+### Шаг 4. Запусти импорт
 
 ```bash
-python3 -m ingestion.tg_import
+python3 -m ingestion.tg_import \
+  --input-dir /Users/protey/pili-crm-data/tg-exports/+79161879839/
 ```
 
-Прогресс выводится построчно:
+Все чаты/сообщения попадут с `owner_account_id` российского аккаунта.
+`first_import_at` и `last_import_at` у аккаунта заполняются автоматически;
+`telegram_user_id` — из `personal_information.user_id` в JSON, если
+в аккаунте пока NULL.
 
-```
-[1/303] Иван Петров: 87 messages
-[2/303] Анна Сидорова: 143 messages
-...
-=== Import complete (42.3s) ===
-Chats   : total=303  new=303  updated=0  failed=0
-Messages: inserted=65096  skipped=0
-```
-
-Если нужен подробный лог (debug уровень):
-
-```bash
-python3 -m ingestion.tg_import --verbose
-```
-
-Если папка экспорта не в стандартном месте:
-
-```bash
-python3 -m ingestion.tg_import --input-dir /path/to/DataExport_2026-04-11
-```
-
-### 5. Проверь результат
+### Шаг 5. Проверь результат
 
 ```sql
--- количество чатов и сообщений
-SELECT COUNT(*) FROM communications_telegram_chat;
+SELECT owner_account_id, COUNT(*)
+  FROM communications_telegram_chat GROUP BY owner_account_id;
 SELECT COUNT(*) FROM communications_telegram_message;
-
--- все чаты должны иметь review_status = 'unreviewed'
-SELECT review_status, COUNT(*)
-FROM communications_telegram_chat
-GROUP BY review_status;
-
--- watermark заполнен у всех чатов
-SELECT COUNT(*) FROM communications_telegram_chat
-WHERE last_imported_message_id IS NULL;
--- должно вернуть 0
+SELECT id, phone_number, display_name, first_import_at, last_import_at
+  FROM communications_telegram_account ORDER BY id;
 ```
 
 ---
 
-## Что делать при повторном экспорте через N месяцев
+## Добавление нового аккаунта (третьего и далее)
 
-Скрипт **идемпотентен**: повторный запуск на том же или расширенном экспорте
-не создаёт дублей.
+1. Сделай выгрузку в Telegram Desktop с этого аккаунта.
+2. Положи содержимое в `+PHONE/` (плоская структура).
+3. `python3 -m ingestion.register_account --phone +PHONE --display-name "..."`.
+4. `python3 -m ingestion.tg_import --input-dir .../+PHONE/`.
 
-Механизм:
+---
 
-- `last_imported_message_id` в таблице `communications_telegram_chat` — watermark.
-  При следующем запуске импортируются только сообщения с `id > watermark`.
-- Уникальный constraint `(chat_id, telegram_message_id)` + `ON CONFLICT DO NOTHING`
-  страхует от дублей даже если watermark по какой-то причине не сработал.
+## Замена выгрузки (ADR-012 §10)
 
-### Порядок действий
+На диске храним **одну актуальную выгрузку на аккаунт**. БД — источник
+правды; JSON-файлы после импорта нужны только как подстраховка до следующей
+выгрузки.
 
-1. Сделай новый экспорт в Telegram Desktop (те же настройки).
-2. Скопируй в `~/pili-crm-data/tg-exports/` — новая папка `DataExport_YYYY-MM-DD`.
-3. Запусти:
+```bash
+cd /Users/protey/pili-crm-data/tg-exports/+77471057849/
+rm -rf chats/ profile_pictures/ result.json DataExport_*/   # снос старого
+cp -r ~/Downloads/Telegram\ Desktop/* ./                    # новое содержимое
+
+cd /Users/protey/pili-crm
+python3 -m ingestion.tg_import --input-dir \
+  /Users/protey/pili-crm-data/tg-exports/+77471057849/
+```
+
+Идемпотентность:
+
+- В таблице `communications_telegram_chat` — watermark
+  `last_imported_message_id`. Повторный запуск импортирует только сообщения
+  с `id > watermark`.
+- UNIQUE `(chat_id, telegram_message_id)` + `ON CONFLICT DO NOTHING`
+  страхует от дублей даже при расхождении watermark.
+- Чаты конфликт-резолвятся по паре `(owner_account_id, telegram_chat_id)` —
+  два аккаунта **не схлопнут** свои чаты, даже если Telegram выдал им
+  одинаковые `telegram_chat_id`.
+
+---
+
+## Автодетект (без `--input-dir`)
 
 ```bash
 python3 -m ingestion.tg_import
 ```
 
-Скрипт автоматически возьмёт **последнюю** папку `DataExport_*` по алфавитной
-сортировке (хронологически последнюю, если имена содержат дату).
-
-Вывод покажет `updated=303  inserted=<только новые сообщения>`.
-
-### Фаза 2 (автоматический инкремент)
-
-После настройки `ingestion/tg_incremental.py` (Задание 3 ADR-010) ручной
-повторный экспорт потребуется только при потере session-файла Telethon.
-До тех пор — ручной экспорт раз в несколько месяцев для полноты истории.
+- Сканирует `/Users/protey/pili-crm-data/tg-exports/` на подпапки с именами
+  в E.164 формате.
+- Ровно один аккаунт → импортирует его. Несколько → отказ с подсказкой
+  передать `--input-dir`.
+- Внутри папки аккаунта: сначала ищет плоский `result.json`, иначе
+  fallback на самую свежую `DataExport_*/`.
 
 ---
 
 ## Troubleshooting
 
-### `result.json not found in ...`
+### `Account <+PHONE> is not registered`
 
-Папка экспорта не содержит `result.json`. Убедись:
-- Экспорт завершился полностью (Telegram Desktop показал «Export complete»).
-- Передан правильный путь: `--input-dir /path/to/DataExport_YYYY-MM-DD`
-  (папка, а не сам `result.json`).
-
-### `No DataExport_* directory found in ~/pili-crm-data/tg-exports/`
-
-Стандартная папка не существует или пуста. Передай путь явно:
+Скрипт не нашёл запись в `communications_telegram_account`. Выполни:
 
 ```bash
-python3 -m ingestion.tg_import \
-  --input-dir ~/Downloads/Telegram\ Desktop/DataExport_2026-04-11
+python3 -m ingestion.register_account --phone +PHONE --display-name "<label>"
 ```
 
-### `DB not available` / `connection refused`
+### `phone mismatch — folder says +X, but result.json says +Y`
 
-PostgreSQL не запущен:
+Выгрузка положена в неправильную папку аккаунта. Проверь, что имя папки
+совпадает с `personal_information.phone_number` из `result.json`
+(whitespace нормализуется автоматически, но сам номер должен совпадать).
+
+### `... is not inside an E.164 account directory`
+
+Папка выгрузки лежит не внутри `+PHONE/` обёртки. Создай папку аккаунта
+с E.164 именем и перенеси туда содержимое (см. «Структура папок»).
+
+### `Multiple accounts found (..., ...). Pass --input-dir to pick one.`
+
+В корне экспортов больше одного E.164-аккаунта, автодетект неоднозначен.
+Передай `--input-dir .../+PHONE/` явно.
+
+### `result.json not found in ...`
+
+В папке аккаунта нет ни плоского `result.json`, ни `DataExport_*/result.json`.
+Убедись, что Telegram Desktop завершил экспорт и файлы скопированы.
+
+### `DB not available` / `connection refused`
 
 ```bash
 docker-compose up -d postgres
@@ -177,28 +205,6 @@ docker-compose up -d postgres
 
 ### `FAILED 'Иван Петров': ...`
 
-Ошибка при импорте одного чата. Этот чат пропущен, остальные продолжают
-импортироваться. Полный traceback виден при `--verbose`.
-
-Частые причины:
-- Нарушена целостность JSON для конкретного чата (редко, но бывает при
-  прерванном экспорте).
-- Временная проблема с соединением с БД — запусти скрипт повторно;
-  watermark защитит от дублей.
-
-### Импорт завис на одном чате
-
-Очень большой чат (10 000+ сообщений) может занять несколько секунд.
-Прогресс-строка выводится в начале обработки чата, а не по завершении.
-Подожди — или запусти с `--verbose` для подробного лога.
-
-### `UnicodeDecodeError`
-
-`result.json` должен быть в UTF-8. Telegram Desktop всегда создаёт UTF-8,
-но если файл был перемещён через Windows-утилиты — возможна перекодировка.
-Проверь: `file result.json` должен показать `UTF-8 Unicode text`.
-
-### Повторный запуск добавил 0 сообщений, хотя в Telegram есть новые
-
-Значит, новые сообщения вышли **после** даты экспорта. Сделай новый экспорт
-или дождись настройки Фазы 2 (Telethon, Задание 3 ADR-010).
+Ошибка в одном чате. Остальные продолжают импортироваться. Полный traceback
+виден при `--verbose`. Причины обычно — нарушенный JSON отдельного чата или
+временная проблема с БД; повторный запуск безопасен (watermark + ON CONFLICT).

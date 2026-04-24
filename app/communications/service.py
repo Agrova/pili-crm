@@ -80,19 +80,23 @@ async def list_chats_by_customer(
 ) -> list[dict[str, Any]]:
     """Every Telegram chat a customer appears in, across all accounts.
 
-    Returned dicts carry the owner account's display name and phone for
-    direct use in the `existing_channels` field of `link_chat_to_customer`
-    (ADR-012 §8).
+    Returned dicts carry the owner account's display name and phone plus a
+    `message_count` — exactly the shape needed for the `existing_channels`
+    field of `link_chat_to_customer` (ADR-012 §8).
     """
     chats = await repository.list_chats_by_customer(session, customer_id)
-    return [
-        {
-            "chat_id": chat.id,
-            "telegram_chat_id": chat.telegram_chat_id,
-            "title": chat.title,
-            "owner_account_id": chat.owner_account_id,
-            "owner_account_display_name": chat.owner_account.display_name,
-            "owner_account_phone": chat.owner_account.phone_number,
-        }
-        for chat in chats
-    ]
+    out: list[dict[str, Any]] = []
+    for chat in chats:
+        message_count = await repository.count_messages_in_chat(session, chat.id)
+        out.append(
+            {
+                "chat_id": chat.id,
+                "telegram_chat_id": chat.telegram_chat_id,
+                "title": chat.title,
+                "owner_account_id": chat.owner_account_id,
+                "owner_account_display_name": chat.owner_account.display_name,
+                "owner_account_phone": chat.owner_account.phone_number,
+                "message_count": message_count,
+            }
+        )
+    return out

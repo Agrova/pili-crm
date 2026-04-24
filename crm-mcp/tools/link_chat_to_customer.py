@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.communications.service import list_chats_by_customer
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -181,6 +182,7 @@ async def run(
         telegram_id_updated = False
         telegram_id_conflict: dict[str, Any] | None = None
         messages_linked = 0
+        existing_channels: list[dict[str, Any]] = []
 
         if mode == "linked":
             assert target_customer is not None
@@ -267,6 +269,22 @@ async def run(
             )
             action, result_cust_id, result_cust_name = "ignored", None, None
 
+        # ── ADR-012 §8: informational "existing channels" for the customer ───
+        # Flush pending writes so the just-inserted links are visible to the
+        # service query (still inside the uncommitted transaction).
+        if result_cust_id is not None:
+            await session.flush()
+            all_channels = await list_chats_by_customer(session, int(result_cust_id))
+            existing_channels = [
+                {
+                    "chat_id": c["chat_id"],
+                    "owner_account_display_name": c["owner_account_display_name"],
+                    "message_count": c["message_count"],
+                }
+                for c in all_channels
+                if c["chat_id"] != int(chat_id)
+            ]
+
         await session.commit()
 
     except SQLAlchemyError as exc:
@@ -287,6 +305,7 @@ async def run(
         "messages_linked": messages_linked,
         "telegram_id_updated": telegram_id_updated,
         "telegram_id_conflict": telegram_id_conflict,
+        "existing_channels": existing_channels,
     }
 
 
