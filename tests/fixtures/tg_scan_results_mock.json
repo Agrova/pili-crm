@@ -1,0 +1,9 @@
+[
+  {"index": 0, "name": "ClientChat", "type": "personal_chat", "msg_count": 10, "category": "client", "confidence": 0.95, "reason": "заказы и доставка", "client_name": "Иван", "topics": ["цена", "заказ"], "has_keywords": true},
+  {"index": 1, "name": "UnknownChat", "type": "personal_chat", "msg_count": 5, "category": "unknown", "confidence": 0.5, "reason": "смешанные темы", "client_name": "", "topics": [], "has_keywords": false},
+  {"index": 2, "name": "FriendChat", "type": "personal_chat", "msg_count": 20, "category": "friend", "confidence": 0.85, "reason": "личная переписка", "client_name": "", "topics": [], "has_keywords": false},
+  {"index": 3, "name": "ServiceChat", "type": "personal_chat", "msg_count": 2, "category": "service", "confidence": 0.98, "reason": "уведомления Telegram", "client_name": "", "topics": [], "has_keywords": false},
+  {"index": 4, "name": "FamilyChat", "type": "personal_chat", "msg_count": 100, "category": "family", "confidence": 0.9, "reason": "родственники", "client_name": "", "topics": [], "has_keywords": false},
+  {"index": 5, "name": "MissingChat", "type": "personal_chat", "msg_count": 3, "category": "client", "confidence": 0.95, "reason": "не импортирован", "client_name": "", "topics": [], "has_keywords": false},
+  {"index": 6, "name": "NoConfidenceChat", "type": "personal_chat", "msg_count": 7, "category": "possible_client", "reason": "без поля confidence", "client_name": "", "topics": [], "has_keywords": false}
+]

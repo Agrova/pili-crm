@@ -13,4 +13,9 @@ from __future__ import annotations
 
 ANALYZER_VERSION: str = "v1.0+qwen3-14b"
 
+# ADR-013 Task 2: legacy preflight classifications imported from
+# `tg_scan_results.json` (Qwen3-14B, pre-ADR-013 scan). Distinct version means
+# these rows carry *only* preflight fields — no narrative, no structured extract.
+TOOLSHOP_LEGACY_VERSION: str = "v0.9+qwen3-14b-toolshop-legacy"
+
 __all__: list[str] = []
