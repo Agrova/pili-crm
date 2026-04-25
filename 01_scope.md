@@ -30,10 +30,8 @@
 | Ревизия untracked-файлов в рабочем дереве (9 коммитов, `e8d8773..c2ed6b3`) | Prompt Factory for Claude Code |
 | MCP-tools очереди модерации Telegram-чатов (ADR-010 Задание 2) | Prompt Factory for Claude Code |
 | Analysis module schema — миграция (ADR-011 Задача 1) | Prompt Factory for Claude Code |
-| Multi-account Telegram support — миграция и сервис (ADR-012 Задача 1) | Prompt Factory for Claude Code |
-| Preflight classification schema — миграция (ADR-013 Задача 1) | Prompt Factory for Claude Code |
-| Preflight import from tg_scan_results.json (ADR-013 Задача 2) | Prompt Factory for Claude Code |
-| Multi-account Telegram ingestion — tg_import rewrite + register_account (ADR-012 Задача 2) | Prompt Factory for Claude Code |
+| Analysis service + repository layer (ADR-011 Задача 2) | Prompt Factory for Claude Code |
+| Analysis CLI runner — `analysis/run.py` + helpers (ADR-011 Задача 3) | Prompt Factory for Claude Code |
 
 ---
 
