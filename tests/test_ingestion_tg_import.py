@@ -715,3 +715,181 @@ def test_find_result_json_legacy_fallback(tmp_path: Path) -> None:
 
     resolved = find_result_json(account_dir)
     assert resolved == legacy
+
+
+# ─── ADR-015 Task 2 Phase A: media metadata written by _import_one_chat ───────
+
+
+async def _media_rows_by_telegram_id(
+    engine: AsyncEngine, owner_account_id: int
+) -> dict[str, dict[str, object]]:
+    """Return telegram_message_id → media-row dict for the given account.
+
+    Keys: media_type, file_name, relative_path, file_size_bytes, mime_type.
+    """
+    async with engine.connect() as conn:
+        rows = (await conn.execute(
+            text(
+                "SELECT m.telegram_message_id, mm.media_type, mm.file_name, "
+                "mm.relative_path, mm.file_size_bytes, mm.mime_type "
+                "FROM communications_telegram_message_media mm "
+                "JOIN communications_telegram_message m ON m.id = mm.message_id "
+                "JOIN communications_telegram_chat c ON c.id = m.chat_id "
+                "WHERE c.owner_account_id = :aid"
+            ),
+            {"aid": owner_account_id},
+        )).all()
+    return {
+        str(r[0]): {
+            "media_type": r[1],
+            "file_name": r[2],
+            "relative_path": r[3],
+            "file_size_bytes": r[4],
+            "mime_type": r[5],
+        }
+        for r in rows
+    }
+
+
+# ─── A1 ── photo import → media row with media_type='photo' ───────────────────
+
+
+async def test_import_writes_media_row_for_photo(
+    clean_telegram: AsyncEngine,
+) -> None:
+    await run_import(
+        FIXTURES / "telegram_export_media.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
+    media = await _media_rows_by_telegram_id(clean_telegram, KAZAKH_ACCOUNT_ID)
+
+    assert "2" in media
+    photo = media["2"]
+    assert photo["media_type"] == "photo"
+    assert photo["relative_path"] == "chats/chat_700001/photos/photo_2024-03-01.jpg"
+    assert photo["file_name"] == "photo_2024-03-01.jpg"
+    assert photo["file_size_bytes"] == 245120
+
+
+# ─── A2 ── xlsx import → media row with media_type='file' and mime_type ──────
+
+
+async def test_import_writes_media_row_for_xlsx(
+    clean_telegram: AsyncEngine,
+) -> None:
+    await run_import(
+        FIXTURES / "telegram_export_media.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
+    media = await _media_rows_by_telegram_id(clean_telegram, KAZAKH_ACCOUNT_ID)
+
+    assert "3" in media
+    xlsx = media["3"]
+    assert xlsx["media_type"] == "file"
+    assert xlsx["file_name"] == "quote.xlsx"
+    assert xlsx["mime_type"] == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert xlsx["relative_path"] == "chats/chat_700001/files/quote.xlsx"
+
+
+# ─── A3 ── docx import → media row with media_type='file' ────────────────────
+
+
+async def test_import_writes_media_row_for_docx(
+    clean_telegram: AsyncEngine,
+) -> None:
+    await run_import(
+        FIXTURES / "telegram_export_media.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
+    media = await _media_rows_by_telegram_id(clean_telegram, KAZAKH_ACCOUNT_ID)
+
+    assert "4" in media
+    docx = media["4"]
+    assert docx["media_type"] == "file"
+    assert docx["file_name"] == "spec.docx"
+    assert docx["mime_type"] == (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
+
+# ─── A4 ── video import → media row with media_type='video_file' ─────────────
+
+
+async def test_import_writes_media_row_for_video_file(
+    clean_telegram: AsyncEngine,
+) -> None:
+    await run_import(
+        FIXTURES / "telegram_export_media.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
+    media = await _media_rows_by_telegram_id(clean_telegram, KAZAKH_ACCOUNT_ID)
+
+    assert "5" in media
+    video = media["5"]
+    assert video["media_type"] == "video_file"
+    assert video["mime_type"] == "video/mp4"
+    assert video["file_name"] == "clip.mp4"
+    assert video["file_size_bytes"] == 1048576
+
+
+# ─── A5 ── text-only message → NO media row ──────────────────────────────────
+
+
+async def test_import_no_media_row_for_text_only_message(
+    clean_telegram: AsyncEngine,
+) -> None:
+    await run_import(
+        FIXTURES / "telegram_export_media.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
+    media = await _media_rows_by_telegram_id(clean_telegram, KAZAKH_ACCOUNT_ID)
+    assert "1" not in media
+
+
+# ─── A6 ── idempotency: re-import does not duplicate media rows ──────────────
+
+
+async def test_reimport_does_not_duplicate_media_rows(
+    clean_telegram: AsyncEngine,
+) -> None:
+    await run_import(
+        FIXTURES / "telegram_export_media.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
+    media1 = await _media_rows_by_telegram_id(clean_telegram, KAZAKH_ACCOUNT_ID)
+
+    await run_import(
+        FIXTURES / "telegram_export_media.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
+    media2 = await _media_rows_by_telegram_id(clean_telegram, KAZAKH_ACCOUNT_ID)
+
+    assert media1 == media2
+    async with clean_telegram.connect() as conn:
+        total = (await conn.execute(text(
+            "SELECT COUNT(*) FROM communications_telegram_message_media"
+        ))).scalar_one()
+    # 5 media messages in the fixture (ids 2,3,4,5,6); id=1 is text-only.
+    assert total == 5
+
+
+# ─── A7 ── photo with `(File not included…)` marker → row, relative_path NULL ─
+
+
+async def test_import_writes_media_row_with_null_relative_path(
+    clean_telegram: AsyncEngine,
+) -> None:
+    await run_import(
+        FIXTURES / "telegram_export_media.json",
+        owner_account_id=KAZAKH_ACCOUNT_ID,
+    )
+    media = await _media_rows_by_telegram_id(clean_telegram, KAZAKH_ACCOUNT_ID)
+
+    assert "6" in media
+    not_downloaded = media["6"]
+    assert not_downloaded["media_type"] == "photo"
+    assert not_downloaded["relative_path"] is None
+    # parser leaves file_size_bytes set even when path is missing
+    assert not_downloaded["file_size_bytes"] == 102400

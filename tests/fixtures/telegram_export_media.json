@@ -1,0 +1,98 @@
+{
+  "about": "Test export — single chat with mixed media types (ADR-015 Task 2).",
+  "chats": {
+    "list": [
+      {
+        "name": "Media Mix",
+        "type": "personal_chat",
+        "id": 700001,
+        "messages": [
+          {
+            "id": 1,
+            "type": "message",
+            "date": "2024-03-01T10:00:00",
+            "date_unixtime": "1709287200",
+            "from": "Alice",
+            "from_id": "user700001",
+            "text": "Plain text — no media",
+            "text_entities": [{"type": "plain", "text": "Plain text — no media"}]
+          },
+          {
+            "id": 2,
+            "type": "message",
+            "date": "2024-03-01T10:05:00",
+            "date_unixtime": "1709287500",
+            "from": "Alice",
+            "from_id": "user700001",
+            "photo": "chats/chat_700001/photos/photo_2024-03-01.jpg",
+            "photo_file_size": 245120,
+            "width": 800,
+            "height": 600,
+            "text": "Look at this photo",
+            "text_entities": [{"type": "plain", "text": "Look at this photo"}]
+          },
+          {
+            "id": 3,
+            "type": "message",
+            "date": "2024-03-01T10:10:00",
+            "date_unixtime": "1709287800",
+            "from": "Alice",
+            "from_id": "user700001",
+            "file": "chats/chat_700001/files/quote.xlsx",
+            "file_name": "quote.xlsx",
+            "file_size": 18432,
+            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "text": "",
+            "text_entities": []
+          },
+          {
+            "id": 4,
+            "type": "message",
+            "date": "2024-03-01T10:15:00",
+            "date_unixtime": "1709288100",
+            "from": "Alice",
+            "from_id": "user700001",
+            "file": "chats/chat_700001/files/spec.docx",
+            "file_name": "spec.docx",
+            "file_size": 24576,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "text": "",
+            "text_entities": []
+          },
+          {
+            "id": 5,
+            "type": "message",
+            "date": "2024-03-01T10:20:00",
+            "date_unixtime": "1709288400",
+            "from": "Alice",
+            "from_id": "user700001",
+            "file": "chats/chat_700001/video_files/clip.mp4",
+            "file_name": "clip.mp4",
+            "file_size": 1048576,
+            "media_type": "video_file",
+            "mime_type": "video/mp4",
+            "duration_seconds": 12,
+            "width": 1280,
+            "height": 720,
+            "text": "",
+            "text_entities": []
+          },
+          {
+            "id": 6,
+            "type": "message",
+            "date": "2024-03-01T10:25:00",
+            "date_unixtime": "1709288700",
+            "from": "Alice",
+            "from_id": "user700001",
+            "photo": "(File not included. Change data exporting settings to download.)",
+            "photo_file_size": 102400,
+            "width": 600,
+            "height": 400,
+            "text": "Photo not exported",
+            "text_entities": [{"type": "plain", "text": "Photo not exported"}]
+          }
+        ]
+      }
+    ]
+  }
+}

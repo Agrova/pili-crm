@@ -36,6 +36,7 @@ from sqlalchemy.pool import NullPool
 from app.communications.models import (
     CommunicationsTelegramChat,
     CommunicationsTelegramMessage,
+    CommunicationsTelegramMessageMedia,
     TelegramChatReviewStatus,
 )
 from app.communications.service import (
@@ -248,12 +249,40 @@ async def _import_one_chat(
                     .on_conflict_do_nothing(
                         constraint="uq_communications_telegram_message_chat_msg"
                     )
+                    .returning(
+                        CommunicationsTelegramMessage.id,
+                        CommunicationsTelegramMessage.telegram_message_id,
+                    )
                 )
-                inserted += (
-                    batch_result.rowcount
-                    if batch_result.rowcount >= 0
-                    else len(chunk)
-                )
+                inserted_rows = batch_result.fetchall()
+                inserted += len(inserted_rows)
+
+                # ADR-015: write normalized media metadata for freshly inserted
+                # messages. ON CONFLICT DO NOTHING above suppresses RETURNING
+                # for duplicates — that's intentional, since the media row was
+                # already written in the previous import.
+                tg_to_db_id = {row[1]: row[0] for row in inserted_rows}
+                media_values = [
+                    {
+                        "message_id": tg_to_db_id[msg.telegram_message_id],
+                        "media_type": msg.media.media_type,
+                        "file_name": msg.media.file_name,
+                        "relative_path": msg.media.relative_path,
+                        "file_size_bytes": msg.media.file_size_bytes,
+                        "mime_type": msg.media.mime_type,
+                    }
+                    for msg in chunk
+                    if msg.media is not None
+                    and msg.telegram_message_id in tg_to_db_id
+                ]
+                if media_values:
+                    await conn.execute(
+                        pg_insert(CommunicationsTelegramMessageMedia)
+                        .values(media_values)
+                        .on_conflict_do_nothing(
+                            constraint="uq_communications_telegram_message_media_message_id"
+                        )
+                    )
 
             max_id = str(max(int(m.telegram_message_id) for m in new_msgs))
             await conn.execute(
