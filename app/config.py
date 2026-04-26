@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     db_user: str = "pili"
     db_password: str = "pili"
     database_url: str = "postgresql+asyncpg://pili:pili@localhost:5432/pili_crm"
+    test_database_url: str | None = None
 
 
 settings = Settings()
