@@ -42,3 +42,45 @@ def test_safety_guard_test_url_without_test_keyword() -> None:
     })
     assert r.returncode == 2
     assert "does not contain 'test'" in r.stdout + r.stderr
+
+
+_TEST_URL = "postgresql+asyncpg://pili:pili@localhost:5432/pili_crm_test"
+_NOWHERE = "postgresql://nobody@nowhere/none"
+
+
+def _run_configure_probe() -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["DATABASE_URL"] = _NOWHERE
+    env["TEST_DATABASE_URL"] = _TEST_URL
+    code = (
+        "import os, sys\n"
+        "sys.path.insert(0, '.')\n"
+        "from tests.conftest import pytest_configure\n"
+        "from app.config import settings\n"
+        "class _Cfg: pass\n"
+        "pytest_configure(_Cfg())\n"
+        "print('SETTINGS_URL=' + settings.database_url)\n"
+        "print('ENV_URL=' + os.environ['DATABASE_URL'])\n"
+    )
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_pytest_configure_overrides_settings_database_url() -> None:
+    """Layer 1: settings.database_url is rebound to test_url after pytest_configure."""
+    r = _run_configure_probe()
+    assert r.returncode == 0, r.stderr
+    assert f"SETTINGS_URL={_TEST_URL}" in r.stdout
+    assert f"SETTINGS_URL={_NOWHERE}" not in r.stdout
+
+
+def test_pytest_configure_overrides_os_environ_database_url() -> None:
+    """Layer 2: os.environ['DATABASE_URL'] is rebound — critical for subprocess(alembic)."""
+    r = _run_configure_probe()
+    assert r.returncode == 0, r.stderr
+    assert f"ENV_URL={_TEST_URL}" in r.stdout
+    assert f"ENV_URL={_NOWHERE}" not in r.stdout

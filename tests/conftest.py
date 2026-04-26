@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 
 import pytest
@@ -37,6 +38,12 @@ def pytest_configure(config: pytest.Config) -> None:
             "Safety guard against typos.",
             returncode=2,
         )
+
+    # Two-layer protection: tests that bypass db_session fixture and use
+    # settings.database_url or subprocess(alembic) directly should also
+    # land on the test DB. See hotfix #3 (root cause of 2026-04-26 wipe).
+    settings.database_url = test_url
+    os.environ["DATABASE_URL"] = test_url
 
 
 @pytest.fixture
