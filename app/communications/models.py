@@ -228,6 +228,12 @@ class CommunicationsTelegramMessage(Base, TimestampMixin):
 
 
 class CommunicationsTelegramMessageMedia(Base):
+    """Append-only media metadata for Telegram messages (ADR-015).
+
+    Immutable — written by the ingester, deleted only via CASCADE from the
+    parent message. `updated_at` intentionally absent.
+    """
+
     __tablename__ = "communications_telegram_message_media"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -245,6 +251,11 @@ class CommunicationsTelegramMessageMedia(Base):
     relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     mime_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
 
     message: Mapped[CommunicationsTelegramMessage] = relationship(
         "CommunicationsTelegramMessage", back_populates="media"

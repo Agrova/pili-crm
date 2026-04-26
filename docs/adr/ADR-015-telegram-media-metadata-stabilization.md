@@ -1,6 +1,6 @@
 # ADR-015: Стабилизация медиа-метаданных в Telegram-инжестере
 
-**Статус:** draft
+**Статус:** accepted
 **Дата:** 2026-04-26
 **Связанные ADR:** ADR-010 (Telegram ingestion), ADR-010 Addendum (reply и медиа-метаданные), ADR-012 (Telegram multiple accounts), ADR-014 (Media extraction pipeline — зависит от этого ADR)
 **Связанные документы:** `06_open_questions.md`, `ingestion/parser.py`, `ingestion/tg_import.py`

@@ -53,6 +53,8 @@ _IMMUTABLE_MODELS: frozenset[str] = frozenset({
     "CatalogListingPrice",
     # Immutable conflict record — deleted on resolution, never updated (ADR-008)
     "WarehousePendingPriceResolution",
+    # Append-only media metadata — written by ingester, deleted via CASCADE (ADR-015)
+    "CommunicationsTelegramMessageMedia",
 })
 
 

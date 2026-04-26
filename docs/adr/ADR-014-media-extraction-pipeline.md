@@ -1,6 +1,6 @@
 # ADR-014: Media extraction pipeline для Telegram-чатов
 
-**Статус:** draft (заблокирован ADR-015)
+**Статус:** accepted
 **Дата:** 2026-04-26
 **Связанные ADR:** ADR-010 (Telegram ingestion), ADR-010 Addendum (reply и медиа-метаданные), ADR-011 (Telegram chat analysis pipeline), ADR-011 Addendum 2 (Mac master + PC worker), ADR-012 (Telegram multiple accounts), ADR-015 (стабилизация медиа-метаданных — pre-requisite)
 **Связанные документы:** `06_open_questions.md`
