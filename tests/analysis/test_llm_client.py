@@ -121,6 +121,113 @@ async def test_complete_treats_timeout_as_retryable() -> None:
     assert state["calls"] == 2
 
 
+async def test_default_timeout_is_300_seconds() -> None:
+    """Hotfix: timeout raised 120 → 300s after first real ADR-011 run."""
+    client = LMStudioClient()
+    assert client.timeout == 300.0
+    await client.aclose()
+
+
+def _capturing_handler(captured: list[dict[str, object]]) -> object:
+    """Mock transport that records the JSON body of /chat/completions."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return _models_response()
+        if request.url.path.endswith("/chat/completions"):
+            import json as _json
+
+            captured.append(_json.loads(request.content))
+            return _completion_response("ok")
+        return httpx.Response(404)
+
+    return handler
+
+
+async def test_payload_always_disables_thinking_for_plain_call() -> None:
+    """chat_template_kwargs.enable_thinking=False applied for chunk_summary
+    style (plain) calls."""
+    captured: list[dict[str, object]] = []
+    transport = httpx.MockTransport(_capturing_handler(captured))
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = LMStudioClient(client=http)
+        await client.complete("chunk-summary prompt")
+    assert len(captured) == 1
+    assert captured[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "response_format" not in captured[0]
+
+
+async def test_payload_disables_thinking_for_master_summary() -> None:
+    """master_summary goes through the same complete() path — separate
+    assertion to guard against regressions if master ever splits off."""
+    captured: list[dict[str, object]] = []
+    transport = httpx.MockTransport(_capturing_handler(captured))
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = LMStudioClient(client=http)
+        await client.complete("master summary of N chunk summaries")
+    assert captured[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "response_format" not in captured[0]
+
+
+async def test_payload_disables_thinking_for_narrative() -> None:
+    captured: list[dict[str, object]] = []
+    transport = httpx.MockTransport(_capturing_handler(captured))
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = LMStudioClient(client=http)
+        await client.complete("narrative prompt")
+    assert captured[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "response_format" not in captured[0]
+
+
+async def test_payload_with_response_format_for_structured_extract() -> None:
+    """response_format propagates verbatim and thinking stays disabled."""
+    from app.analysis.schemas import StructuredExtract
+
+    rf: dict[str, object] = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "structured_extract",
+            "schema": StructuredExtract.model_json_schema(),
+            "strict": True,
+        },
+    }
+    captured: list[dict[str, object]] = []
+    transport = httpx.MockTransport(_capturing_handler(captured))
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = LMStudioClient(client=http)
+        await client.complete("extract prompt", response_format=rf)
+    assert captured[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert captured[0]["response_format"] == rf
+    js = captured[0]["response_format"]["json_schema"]  # type: ignore[index,call-overload]
+    assert js["name"] == "structured_extract"
+    assert js["strict"] is True
+    assert js["schema"] == StructuredExtract.model_json_schema()
+
+
+async def test_payload_with_response_format_for_matching() -> None:
+    from analysis.matching import MATCHING_RESPONSE_FORMAT
+
+    captured: list[dict[str, object]] = []
+    transport = httpx.MockTransport(_capturing_handler(captured))
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = LMStudioClient(client=http)
+        await client.complete("matching prompt", response_format=MATCHING_RESPONSE_FORMAT)
+    assert captured[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    rf = captured[0]["response_format"]
+    assert isinstance(rf, dict)
+    assert rf["type"] == "json_schema"
+    schema = rf["json_schema"]["schema"]
+    props = schema["properties"]
+    assert set(props.keys()) == {"decision", "product_id", "candidate_ids", "note"}
+    assert props["decision"]["enum"] == [
+        "confident_match",
+        "ambiguous",
+        "not_found",
+    ]
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["decision", "note"]
+
+
 async def test_detect_model_returns_first_available() -> None:
     seen_paths: list[str] = []
 

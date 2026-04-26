@@ -102,6 +102,18 @@ logger = logging.getLogger("analysis.run")
 EXTRACT_RETRY_ATTEMPTS = 3
 SIGINT_FORCE_KILL_WINDOW_SECONDS = 5.0
 
+# Constrained-generation schema for structured_extract — forces LM Studio to
+# emit a JSON object matching StructuredExtract on the token level, so the
+# defensive _strip_json_fence + Pydantic-retry loop becomes a fallback.
+EXTRACT_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "structured_extract",
+        "schema": StructuredExtract.model_json_schema(),
+        "strict": True,
+    },
+}
+
 # ── SIGINT handling ─────────────────────────────────────────────────────────
 
 _shutdown_requested: bool = False
@@ -319,7 +331,7 @@ async def _build_extract(
     prompt = render(template, narrative=narrative)
     last_error: Exception | None = None
     for attempt in range(1, EXTRACT_RETRY_ATTEMPTS + 1):
-        raw = await llm.complete(prompt)
+        raw = await llm.complete(prompt, response_format=EXTRACT_RESPONSE_FORMAT)
         try:
             return StructuredExtract.model_validate_json(_strip_json_fence(raw))
         except (ValidationError, ValueError) as exc:

@@ -8,15 +8,18 @@ call returns the assistant text from
 
 Behavioural decisions (locked in by ADR-011 §12 + Phase-1 review):
 
-- **No ``enable_thinking``** — Qwen3-14B's thinking mode adds latency
-  without quality gain on this batch task (validated on the prior
-  ``tool-shop-crm`` artefact).
+- **Disable thinking** via ``chat_template_kwargs.enable_thinking=False``
+  in every payload — Qwen3's chain-of-thought consumed 60–80% of the
+  generation budget on the first real run with no quality gain on
+  structured-extract tasks. Textual ``/no_think`` hints in the prompt
+  are ignored by Qwen3; the chat-template kwarg is the only reliable
+  channel.
 - **Auto-detect model** via ``GET /v1/models`` on first call; first
   available model id is used. Cached for the client lifetime.
 - **Retry**: 3 attempts, exponential backoff 1s / 4s / 16s. Final
   failure raises :class:`LLMRequestError` — caller (orchestrator)
   marks the chat as ``failed`` and proceeds.
-- **Timeout** per HTTP call: 120s (configurable).
+- **Timeout** per HTTP call: 300s (configurable).
 """
 
 from __future__ import annotations
@@ -30,7 +33,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENDPOINT = "http://localhost:1234/v1"
-DEFAULT_TIMEOUT_SECONDS = 120.0
+# Empirically calibrated after the first real ADR-011 Task 3 run on
+# chat 5450: Qwen3-8b's reasoning + JSON-generation occasionally
+# exceeds 120s on a long narrative. 300s gives ~2x headroom.
+DEFAULT_TIMEOUT_SECONDS = 300.0
 DEFAULT_MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = (1.0, 4.0, 16.0)
 
@@ -101,6 +107,7 @@ class LMStudioClient:
         system: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 4096,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         """Send a chat-completion request, retrying transient errors.
 
@@ -119,7 +126,10 @@ class LMStudioClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
 
         url = f"{self.endpoint}/chat/completions"
         last_exc: BaseException | None = None

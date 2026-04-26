@@ -73,6 +73,7 @@ class _MockLM:
         system: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 4096,
+        response_format: dict[str, object] | None = None,
     ) -> str:
         self.calls.append(prompt)
         if prompt.startswith("Ты помощник владельца"):

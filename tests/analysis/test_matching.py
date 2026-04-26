@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
 from analysis import matching
 from analysis.matching import (
+    MATCHING_RESPONSE_FORMAT,
     CatalogEntry,
     decide_match,
 )
@@ -34,6 +36,7 @@ class _FakeLLM:
 
     responses: list[str] = field(default_factory=list)
     calls: list[str] = field(default_factory=list)
+    response_formats: list[dict[str, Any] | None] = field(default_factory=list)
 
     async def complete(
         self,
@@ -42,8 +45,10 @@ class _FakeLLM:
         system: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 4096,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         self.calls.append(prompt)
+        self.response_formats.append(response_format)
         if not self.responses:
             raise AssertionError("FakeLLM ran out of canned responses")
         return self.responses.pop(0)
@@ -149,6 +154,28 @@ async def test_qwen_not_found_propagates() -> None:
     assert decision.matched_product_id is None
     assert decision.candidates is None
     assert decision.not_found_reason == "ни один кандидат не подходит"
+
+
+async def test_decide_match_passes_response_format_to_llm() -> None:
+    """Hotfix: matching uses constrained generation via response_format."""
+    catalog = [
+        CatalogEntry(product_id=1, name="Рубанок Veritas #5 PM-V11"),
+        CatalogEntry(product_id=2, name="Рубанок Veritas #5 O1"),
+    ]
+    llm = _FakeLLM(
+        responses=[
+            json.dumps(
+                {
+                    "decision": "not_found",
+                    "product_id": None,
+                    "candidate_ids": None,
+                    "note": "n/a",
+                }
+            )
+        ]
+    )
+    await decide_match("рубанок Veritas #5", catalog, llm)
+    assert llm.response_formats == [MATCHING_RESPONSE_FORMAT]
 
 
 # ── Sanity tests on the helpers ─────────────────────────────────────────────

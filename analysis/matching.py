@@ -28,7 +28,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from rapidfuzz import fuzz, process
 from sqlalchemy import select
@@ -53,6 +53,35 @@ CONFIDENT_THRESHOLD: int = 85
 CONFIDENT_MARGIN: int = 15
 DISCARD_THRESHOLD: int = 40
 TOP_N: int = 20
+
+# Constrained-generation schema for the matching verdict — keeps Qwen
+# from emitting prose around the JSON, makes _strip_json_fence a defensive
+# fallback rather than the primary parser. Domain contract lives next to
+# MATCHING_PROMPT and _parse_qwen_verdict.
+MATCHING_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "matching_verdict",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "decision": {
+                    "type": "string",
+                    "enum": ["confident_match", "ambiguous", "not_found"],
+                },
+                "product_id": {"type": ["integer", "null"]},
+                "candidate_ids": {
+                    "type": ["array", "null"],
+                    "items": {"type": "integer"},
+                },
+                "note": {"type": "string"},
+            },
+            "required": ["decision", "note"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+}
 
 _PUNCT_RE = re.compile(r"[.,;:()/]")
 
@@ -92,6 +121,7 @@ class _LLMCaller(Protocol):
         system: str | None = ...,
         temperature: float = ...,
         max_tokens: int = ...,
+        response_format: dict[str, Any] | None = ...,
     ) -> str: ...
 
 
@@ -263,7 +293,7 @@ async def decide_match(
         items_text=items_text,
         candidates=_format_candidates_block(candidates),
     )
-    raw = await llm_client.complete(prompt)
+    raw = await llm_client.complete(prompt, response_format=MATCHING_RESPONSE_FORMAT)
     return _parse_qwen_verdict(raw, candidates)
 
 
@@ -355,6 +385,7 @@ __all__ = [
     "CONFIDENT_MARGIN",
     "DISCARD_THRESHOLD",
     "TOP_N",
+    "MATCHING_RESPONSE_FORMAT",
     "CatalogEntry",
     "FuzzyCandidate",
     "MatchDecision",
