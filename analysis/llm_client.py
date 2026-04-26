@@ -35,7 +35,7 @@ DEFAULT_ENDPOINT = "http://localhost:1234/v1"
 # Empirically calibrated after the first real ADR-011 Task 3 run on
 # chat 5450: Qwen3-8b's reasoning + JSON-generation occasionally
 # exceeds 120s on a long narrative. 300s gives ~2x headroom.
-DEFAULT_TIMEOUT_SECONDS = 300.0
+DEFAULT_TIMEOUT_SECONDS = 900.0
 DEFAULT_MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = (1.0, 4.0, 16.0)
 
