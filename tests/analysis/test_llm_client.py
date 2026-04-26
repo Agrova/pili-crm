@@ -15,11 +15,13 @@ suite stays fast.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import httpx
 import pytest
 
 from analysis import llm_client as llm_client_module
-from analysis.llm_client import LLMRequestError, LMStudioClient
+from analysis.llm_client import LLMRequestError, LMStudioClient, _inject_no_think
 
 
 @pytest.fixture(autouse=True)
@@ -128,7 +130,9 @@ async def test_default_timeout_is_300_seconds() -> None:
     await client.aclose()
 
 
-def _capturing_handler(captured: list[dict[str, object]]) -> object:
+def _capturing_handler(
+    captured: list[dict[str, object]],
+) -> Callable[[httpx.Request], httpx.Response]:
     """Mock transport that records the JSON body of /chat/completions."""
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -198,7 +202,7 @@ async def test_payload_with_response_format_for_structured_extract() -> None:
         await client.complete("extract prompt", response_format=rf)
     assert captured[0]["chat_template_kwargs"] == {"enable_thinking": False}
     assert captured[0]["response_format"] == rf
-    js = captured[0]["response_format"]["json_schema"]  # type: ignore[index,call-overload]
+    js = captured[0]["response_format"]["json_schema"]
     assert js["name"] == "structured_extract"
     assert js["strict"] is True
     assert js["schema"] == StructuredExtract.model_json_schema()
@@ -253,3 +257,55 @@ async def test_detect_model_returns_first_available() -> None:
         second = await client.detect_model()
     assert first == second == "qwen3-14b-instruct"
     assert seen_paths.count("/v1/models") == 1
+
+
+# ---------------------------------------------------------------------------
+# Hotfix #4: /no_think suffix — отключение Qwen3 reasoning на CUDA backend
+# ---------------------------------------------------------------------------
+
+
+async def test_user_messages_get_no_think_suffix() -> None:
+    """Workaround for CUDA backend ignoring chat_template_kwargs.enable_thinking."""
+    captured: list[dict[str, object]] = []
+    transport = httpx.MockTransport(_capturing_handler(captured))
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = LMStudioClient(client=http)
+        await client.complete("test prompt")
+    user_msg = captured[0]["messages"][0]  # type: ignore[index]
+    assert user_msg["content"] == "test prompt\n\n/no_think"
+    assert user_msg["content"].endswith("/no_think")
+
+
+async def test_user_messages_already_with_no_think_not_duplicated() -> None:
+    """Idempotency: existing /no_think suffix is not duplicated."""
+    captured: list[dict[str, object]] = []
+    transport = httpx.MockTransport(_capturing_handler(captured))
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = LMStudioClient(client=http)
+        await client.complete("test prompt /no_think")
+    user_msg = captured[0]["messages"][0]  # type: ignore[index]
+    assert user_msg["content"].count("/no_think") == 1
+
+
+def test_non_user_messages_not_modified() -> None:
+    """Suffix is added only to user messages, not system or assistant."""
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "u"},
+        {"role": "assistant", "content": "a"},
+    ]
+    result = _inject_no_think(messages)
+    assert result[0]["content"] == "sys"
+    assert result[1]["content"] == "u\n\n/no_think"
+    assert result[2]["content"] == "a"
+
+
+async def test_chat_template_kwargs_preserved() -> None:
+    """Existing enable_thinking=False parameter is preserved (Mac MLX still uses it)."""
+    captured: list[dict[str, object]] = []
+    transport = httpx.MockTransport(_capturing_handler(captured))
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = LMStudioClient(client=http)
+        await client.complete("any prompt")
+    assert captured[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert captured[0]["messages"][-1]["content"].endswith("/no_think")  # type: ignore[index]

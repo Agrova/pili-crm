@@ -8,12 +8,11 @@ call returns the assistant text from
 
 Behavioural decisions (locked in by ADR-011 §12 + Phase-1 review):
 
-- **Disable thinking** via ``chat_template_kwargs.enable_thinking=False``
-  in every payload — Qwen3's chain-of-thought consumed 60–80% of the
-  generation budget on the first real run with no quality gain on
-  structured-extract tasks. Textual ``/no_think`` hints in the prompt
-  are ignored by Qwen3; the chat-template kwarg is the only reliable
-  channel.
+- **Disable thinking** via two mechanisms (hotfix #4):
+  ``chat_template_kwargs.enable_thinking=False`` (works on Mac MLX backend)
+  plus ``\\n\\n/no_think`` suffix appended to every user-message (works on
+  CUDA llama.cpp backend where the kwarg is ignored). Suffix is idempotent —
+  not added when already present in the prompt.
 - **Auto-detect model** via ``GET /v1/models`` on first call; first
   available model id is used. Cached for the client lifetime.
 - **Retry**: 3 attempts, exponential backoff 1s / 4s / 16s. Final
@@ -39,6 +38,22 @@ DEFAULT_ENDPOINT = "http://localhost:1234/v1"
 DEFAULT_TIMEOUT_SECONDS = 300.0
 DEFAULT_MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = (1.0, 4.0, 16.0)
+
+
+def _inject_no_think(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Append ``\\n\\n/no_think`` to every user-message (idempotent).
+
+    Workaround: CUDA llama.cpp backend ignores
+    ``chat_template_kwargs.enable_thinking=False`` (hotfix #4).
+    """
+    result: list[dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content", "")
+        if msg.get("role") == "user" and "/no_think" not in str(content):
+            result.append({**msg, "content": str(content) + "\n\n/no_think"})
+        else:
+            result.append(msg)
+    return result
 
 
 class LLMRequestError(RuntimeError):
@@ -119,6 +134,7 @@ class LMStudioClient:
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+        messages = _inject_no_think(messages)
 
         payload: dict[str, Any] = {
             "model": model_id,
