@@ -222,6 +222,33 @@ class CommunicationsTelegramMessage(Base, TimestampMixin):
     chat: Mapped[CommunicationsTelegramChat] = relationship(
         "CommunicationsTelegramChat", back_populates="messages"
     )
+    media: Mapped[CommunicationsTelegramMessageMedia | None] = relationship(
+        "CommunicationsTelegramMessageMedia", back_populates="message", uselist=False
+    )
+
+
+class CommunicationsTelegramMessageMedia(Base):
+    __tablename__ = "communications_telegram_message_media"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    message_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "communications_telegram_message.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        unique=True,
+    )
+    media_type: Mapped[str] = mapped_column(Text, nullable=False)
+    file_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    message: Mapped[CommunicationsTelegramMessage] = relationship(
+        "CommunicationsTelegramMessage", back_populates="media"
+    )
 
 
 class CommunicationsLink(Base, TimestampMixin):
