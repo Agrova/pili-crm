@@ -75,7 +75,7 @@ from analysis.prompts import (
     STRUCTURED_EXTRACT_PROMPT_WITH_SCHEMA,
     render,
 )
-from app.analysis import ANALYZER_VERSION
+from app.analysis import ANALYZER_VERSION, make_analyzer_version
 from app.analysis.exceptions import (
     AnalysisAlreadyAppliedError,
     MultipleCustomersForChatError,
@@ -222,18 +222,22 @@ def _parse_since(value: str) -> datetime:
 
 
 async def filter_already_processed(
-    session: AsyncSession, chat_ids: list[int], *, force: bool
+    session: AsyncSession,
+    chat_ids: list[int],
+    *,
+    force: bool,
+    analyzer_version: str = ANALYZER_VERSION,
 ) -> tuple[list[int], list[int]]:
     """Return ``(to_process, skipped)``.
 
     A chat is *skipped* when an ``analysis_chat_analysis`` row already
-    exists for the current ``ANALYZER_VERSION``, unless ``force=True``.
+    exists for the given ``analyzer_version``, unless ``force=True``.
     """
     if not chat_ids or force:
         return list(chat_ids), []
     stmt = select(AnalysisChatAnalysis.chat_id).where(
         AnalysisChatAnalysis.chat_id.in_(chat_ids),
-        AnalysisChatAnalysis.analyzer_version == ANALYZER_VERSION,
+        AnalysisChatAnalysis.analyzer_version == analyzer_version,
     )
     result = await session.execute(stmt)
     done = {int(cid) for cid in result.scalars().all()}
@@ -359,6 +363,8 @@ async def process_chat(
     prompt_variant: PromptVariant,
     force: bool,
     commit_fn: CommitFn | None = None,
+    analyzer_version: str = ANALYZER_VERSION,
+    no_apply: bool = False,
 ) -> str:
     """Run the full pipeline for one chat. Returns ``done``/``failed``/``interrupted``.
 
@@ -426,43 +432,48 @@ async def process_chat(
         analysis = await record_full_analysis(
             session,
             chat_id=chat_id,
-            analyzer_version=ANALYZER_VERSION,
+            analyzer_version=analyzer_version,
             messages_analyzed_up_to=messages[-1].telegram_message_id,
             narrative_markdown=narrative,
             matched_extract=matched_extract,
             chunks_count=len(chunks),
         )
 
-        try:
-            result = await apply_analysis_to_customer(
-                session, analysis_id=analysis.id, force=force
+        if not no_apply:
+            try:
+                result = await apply_analysis_to_customer(
+                    session, analysis_id=analysis.id, force=force
+                )
+            except AnalysisAlreadyAppliedError as exc:
+                await mark_failed(
+                    session, chat_id=chat_id, failure_reason=f"already_applied: {exc}"
+                )
+                await commit_fn()
+                return "failed"
+            except MultipleCustomersForChatError as exc:
+                await mark_failed(
+                    session,
+                    chat_id=chat_id,
+                    failure_reason=f"multiple_customers: {exc.customer_ids!r}",
+                )
+                await commit_fn()
+                return "failed"
+            logger.info(
+                "chat_id=%s applied: customer=%s orders=%d items=%d pending=%d "
+                "preferences=%d incidents=%d",
+                chat_id,
+                result.customer_id,
+                result.orders_created,
+                result.order_items_created,
+                result.pending_items_created,
+                result.preferences_added,
+                result.incidents_added,
             )
-        except AnalysisAlreadyAppliedError as exc:
-            await mark_failed(
-                session, chat_id=chat_id, failure_reason=f"already_applied: {exc}"
+        else:
+            logger.info(
+                "--no-apply: skipping apply_analysis_to_customer for chat_id=%s",
+                chat_id,
             )
-            await commit_fn()
-            return "failed"
-        except MultipleCustomersForChatError as exc:
-            await mark_failed(
-                session,
-                chat_id=chat_id,
-                failure_reason=f"multiple_customers: {exc.customer_ids!r}",
-            )
-            await commit_fn()
-            return "failed"
-
-        logger.info(
-            "chat_id=%s applied: customer=%s orders=%d items=%d pending=%d "
-            "preferences=%d incidents=%d",
-            chat_id,
-            result.customer_id,
-            result.orders_created,
-            result.order_items_created,
-            result.pending_items_created,
-            result.preferences_added,
-            result.incidents_added,
-        )
         await mark_done(session, chat_id=chat_id)
         await commit_fn()
         return "done"
@@ -564,6 +575,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--worker-tag",
+        type=str,
+        default="mac",
+        help=(
+            "Worker identifier (default 'mac'). Used as suffix to ANALYZER_VERSION "
+            "for distinguishing parallel runs on different machines. "
+            "Allowed: [a-z0-9-]+, e.g. 'mac', 'pc'."
+        ),
+    )
+    parser.add_argument(
+        "--no-apply",
+        action="store_true",
+        help=(
+            "Skip apply_analysis_to_customer phase. Used on PC worker — "
+            "apply happens on Mac under operator review via Cowork."
+        ),
+    )
+
     return parser
 
 
@@ -611,7 +641,15 @@ async def main(argv: list[str] | None = None) -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        analyzer_version = make_analyzer_version(args.worker_tag)
+    except ValueError:
+        parser.error(
+            f"--worker-tag: invalid value {args.worker_tag!r}; allowed [a-z0-9-]+"
+        )
 
     async with async_session_factory() as session:
         if args.status:
@@ -628,7 +666,7 @@ async def main(argv: list[str] | None = None) -> int:
             return 0
 
         to_process, skipped = await filter_already_processed(
-            session, chat_ids, force=args.force
+            session, chat_ids, force=args.force, analyzer_version=analyzer_version
         )
         if skipped:
             print(
@@ -672,6 +710,8 @@ async def main(argv: list[str] | None = None) -> int:
                         chunk_size=args.chunk_size,
                         prompt_variant=args.prompt_variant,
                         force=args.force,
+                        analyzer_version=analyzer_version,
+                        no_apply=args.no_apply,
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception("unexpected error processing chat_id=%s", cid)

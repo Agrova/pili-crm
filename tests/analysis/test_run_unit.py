@@ -21,6 +21,7 @@ from analysis.prompts import (
     STRUCTURED_EXTRACT_PROMPT,
     STRUCTURED_EXTRACT_PROMPT_WITH_SCHEMA,
 )
+from app.analysis import ANALYZER_VERSION, ANALYZER_VERSION_BASE, make_analyzer_version
 
 
 @dataclass
@@ -176,3 +177,125 @@ async def test_build_extract_recovers_on_retry() -> None:
     )
     assert extract.schema_version == 1
     assert len(llm.calls) == 2
+
+
+# ── ADR-011 Addendum 2: make_analyzer_version + CLI flags ──────────────────
+
+
+def test_make_analyzer_version_default_mac_no_suffix() -> None:
+    """Backward compat: worker_tag='mac' (default) → no suffix."""
+    assert make_analyzer_version("mac") == "v1.0+qwen3-14b"
+    assert make_analyzer_version() == "v1.0+qwen3-14b"
+    assert make_analyzer_version("mac") == ANALYZER_VERSION_BASE
+    assert make_analyzer_version("mac") == ANALYZER_VERSION
+
+
+def test_make_analyzer_version_pc_with_suffix() -> None:
+    """Non-mac tag gets @<tag> suffix."""
+    assert make_analyzer_version("pc") == "v1.0+qwen3-14b@pc"
+    assert make_analyzer_version("worker-1") == "v1.0+qwen3-14b@worker-1"
+
+
+def test_make_analyzer_version_invalid_tag_raises() -> None:
+    """Invalid characters in tag raise ValueError."""
+    with pytest.raises(ValueError):
+        make_analyzer_version("PC")       # uppercase
+    with pytest.raises(ValueError):
+        make_analyzer_version("pc!")      # special char
+    with pytest.raises(ValueError):
+        make_analyzer_version("")         # empty
+    with pytest.raises(ValueError):
+        make_analyzer_version("mac@oops")  # @ is not allowed
+
+
+def test_run_cli_worker_tag_validation() -> None:
+    """CLI rejects invalid --worker-tag values (uppercase → parser.error → exit 2)."""
+    import os
+    import subprocess
+    import sys
+
+    env = {
+        **os.environ,
+        "DATABASE_URL": "postgresql+asyncpg://nobody@nowhere/none",
+        "TEST_DATABASE_URL": "postgresql+asyncpg://pili:pili@localhost:5432/pili_crm_test",
+    }
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "analysis.run",
+            "--chat-id", "1",
+            "--worker-tag", "PC",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "worker-tag" in combined.lower() or "invalid" in combined.lower()
+
+
+async def test_run_no_apply_skips_apply_call(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When no_apply=True, apply_analysis_to_customer is NOT called."""
+    import logging
+    from unittest.mock import AsyncMock, MagicMock
+
+    run.reset_shutdown_flag()
+
+    fake_analysis = MagicMock()
+    fake_analysis.id = 999
+
+    monkeypatch.setattr("analysis.run.set_stage", AsyncMock())
+    monkeypatch.setattr("analysis.run.mark_done", AsyncMock())
+    monkeypatch.setattr("analysis.run.mark_failed", AsyncMock())
+    mock_record = AsyncMock(return_value=fake_analysis)
+    monkeypatch.setattr("analysis.run.record_full_analysis", mock_record)
+    mock_apply = AsyncMock()
+    monkeypatch.setattr("analysis.run.apply_analysis_to_customer", mock_apply)
+
+    fake_msg = MagicMock()
+    fake_msg.telegram_message_id = 42
+    monkeypatch.setattr(
+        "analysis.run.load_chat_messages", AsyncMock(return_value=[fake_msg])
+    )
+    monkeypatch.setattr(
+        "analysis.run.split_into_chunks",
+        lambda msgs, *, chunk_size: [msgs],
+    )
+    monkeypatch.setattr(
+        "analysis.run._summarise_chunks", AsyncMock(return_value=["summary"])
+    )
+    monkeypatch.setattr(
+        "analysis.run._build_extract", AsyncMock(return_value=MagicMock())
+    )
+    monkeypatch.setattr(
+        "analysis.run.match_extract", AsyncMock(return_value=MagicMock())
+    )
+
+    llm = _FakeLLM(responses=["master_summary_text", "narrative_text"])
+    session = MagicMock()
+    commit_fn = AsyncMock()
+
+    with caplog.at_level(logging.INFO, logger="analysis.run"):
+        result = await run.process_chat(
+            session,
+            chat_id=1,
+            llm_client=llm,  # type: ignore[arg-type]
+            catalog=[],
+            chunk_size=300,
+            prompt_variant="example",
+            force=False,
+            commit_fn=commit_fn,
+            analyzer_version="v1.0+qwen3-14b",
+            no_apply=True,
+        )
+
+    assert result == "done"
+    assert mock_apply.call_count == 0
+    assert mock_record.call_count == 1
+    assert any(
+        "--no-apply" in r.message and "skipping" in r.message
+        for r in caplog.records
+    )
