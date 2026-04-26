@@ -293,7 +293,7 @@ async def decide_match(
         items_text=items_text,
         candidates=_format_candidates_block(candidates),
     )
-    raw = await llm_client.complete(prompt, response_format=MATCHING_RESPONSE_FORMAT)
+    raw = await llm_client.complete(prompt)
     return _parse_qwen_verdict(raw, candidates)
 
 

@@ -331,7 +331,7 @@ async def _build_extract(
     prompt = render(template, narrative=narrative)
     last_error: Exception | None = None
     for attempt in range(1, EXTRACT_RETRY_ATTEMPTS + 1):
-        raw = await llm.complete(prompt, response_format=EXTRACT_RESPONSE_FORMAT)
+        raw = await llm.complete(prompt)
         try:
             return StructuredExtract.model_validate_json(_strip_json_fence(raw))
         except (ValidationError, ValueError) as exc:

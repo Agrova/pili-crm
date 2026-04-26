@@ -19,7 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-_Config = ConfigDict(extra="forbid", populate_by_name=True)
+_Config = ConfigDict(extra="ignore", populate_by_name=True)
 
 
 class Identity(BaseModel):
@@ -126,7 +126,7 @@ SkippedReason = Literal["not_client", "empty"]
 class PreflightClassification(BaseModel):
     """Qwen preflight verdict — decides whether full analysis runs (ADR-013)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     classification: PreflightClass
     confidence: PreflightConfidence
