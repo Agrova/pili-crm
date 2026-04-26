@@ -15,6 +15,30 @@
 
 ## Закрытые вопросы
 
+### [2026-04-26] — `enable_thinking: false` игнорируется LM Studio CUDA backend
+
+- **Закрыт:** hotfix #4, коммит `0f28cc6`. Workaround: суффикс `\n\n/no_think` к каждому user-message в payload (`analysis/llm_client.py`, функция `_inject_no_think`).
+- **Подтверждение работы fix:** прогон chat_id=6017 на PC после hotfix #4 (2026-04-26 17:44+):
+  - Лог LM Studio: `Reasoned for 0.41 seconds` (vs 70-90 сек до фикса).
+  - `reasoning_tokens: 1` (vs 498 до фикса).
+  - `reasoning_content: "\n\n"` (vs полный CoT текст до фикса).
+- **Симптомы до фикса:** на PC LM Studio (CUDA llama.cpp backend, qwen3-14b GGUF Q4_K_M) параметр `chat_template_kwargs.enable_thinking: false` уходил в payload, но Qwen3 всё равно выполнял reasoning ~70-90 секунд на запрос. На Mac MLX backend (та же версия LM Studio 0.4.12 build 1, та же модель) тот же параметр работал корректно.
+- **Решение:** двойной механизм — `enable_thinking: false` оставлен (на Mac работает) + `/no_think` суффикс добавляется к user-messages (работает на любом backend независимо от поддержки `chat_template_kwargs`). Идемпотентность через `if "/no_think" not in content`.
+- **Замечание про эффективность:** ожидавшееся ускорение прогона 1.5-2× не достигнуто (27:19 → 24:46, всего 9% сокращение). Reasoning отключён успешно, но основное время на PC съедает не reasoning, а скорость генерации 5 tok/s на CUDA backend (vs 17-25 tok/s на Mac MLX) из-за частичного offload через PCIe shared memory. Hotfix решил проблему, которую был призван решить, но узкое место оказалось в другом. См. ADR-011 Addendum 2 о решении стратегии PC.
+- **Связано:** ADR-011 Addendum 2 (PC как worker — принят 2026-04-26).
+- **Тесты:** +4 в `tests/analysis/test_llm_client.py` (test_user_messages_get_no_think_suffix, test_user_messages_already_with_no_think_not_duplicated, test_non_user_messages_not_modified, test_chat_template_kwargs_preserved). Базовая линия после хотфикса — 341 passed (с учётом 5 несвязанных fail'ов).
+
+### [2026-04-26] — `ANALYZER_VERSION` не отражает фактическую модель
+
+- **Закрыт:** ADR-011 Addendum 2 (принят 2026-04-26) + коммит `90da591` с CLI-флагами `--worker-tag` и `--no-apply` в `analysis/run.py`.
+- **Решение:** формат `analyzer_version` = `<base>@<worker_tag>`, где `base = v1.0+qwen3-14b`, `worker_tag` передаётся CLI-флагом `--worker-tag`. Default `mac` → суффикс **не добавляется** для обратной совместимости с существующими записями в БД. Другие теги (`pc`, `worker-1` и т.п.) → `v1.0+qwen3-14b@<tag>`. Реализовано через `make_analyzer_version()` в `app/analysis/__init__.py`. Старая константа `ANALYZER_VERSION` оставлена как алиас на `ANALYZER_VERSION_BASE` для обратной совместимости с импортами.
+- **Контекст:** обнаружено 2026-04-26 при сравнении PC (8b) vs Mac (14b) на chat_id=6017. Pipeline-логика версионирования (PROMPTS_VERSION = версия промтов; ANALYZER_VERSION = версия конвейера) работает корректно — но семантика «конвейер» неявно подразумевает фиксированную модель и фиксированную машину, что нарушается при распределённой эксплуатации Mac+PC. Также мешало прямому A/B-сравнению моделей на одном чате — требовался ручной DELETE между прогонами.
+- **Тесты:** +5 в `tests/analysis/test_run_unit.py` (`test_make_analyzer_version_default_mac_no_suffix`, `test_make_analyzer_version_pc_with_suffix`, `test_make_analyzer_version_invalid_tag_raises`, `test_run_cli_worker_tag_validation`, `test_run_no_apply_skips_apply_call`).
+- **Альтернативы (отвергнутые):**
+  - (а) Авто-определение модели через `GET /v1/models`: отвергнуто, так как проблема не только в модели, но и в машине-источнике (Mac vs PC).
+  - (в) Отдельная колонка `model_used`: отвергнуто из-за необходимости миграции при простом флаге.
+- **Связано:** ADR-011 Addendum 2, коммит `90da591`.
+
 ### [2026-04-23] — Git identity и remote URL — косметика
 
 - **Суть:** в рабочей копии `/Users/protey/pili-crm` `git config` не содержит явной `user.name` / `user.email`, поэтому коммиты идут с auto-generated identity `Roman Ageev <protey@Romans-MacBook-Air.local>`. Также remote URL настроен на lowercase `agrova`, при push GitHub шлёт информационный redirect на `Agrova` (правильный регистр в реальном имени организации).
