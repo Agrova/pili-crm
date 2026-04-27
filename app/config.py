@@ -12,5 +12,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://pili:pili@localhost:5432/pili_crm"
     test_database_url: str | None = None
 
+    MEDIA_EXTRACT_MODEL_PRIMARY: str = "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit"
+    MEDIA_EXTRACT_MODEL_FALLBACK: str = "mlx-community/Qwen3-VL-8B-Instruct-MLX-4bit"
+    MEDIA_EXTRACT_DEFAULT_ENDPOINT: str = "http://localhost:1234/v1"
+    LM_STUDIO_API_BASE: str = "http://localhost:1234"
+
 
 settings = Settings()
