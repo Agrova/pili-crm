@@ -5,11 +5,15 @@ Public surface:
 - ``PendingMediaMessage`` — DTO returned by the selector.
 - ``ExtractionResult``   — DTO consumed by the writer.
 - ``ExtractorKind``      — routing decision enum.
-- ``select_pending_messages`` — single-query selector with chat+account JOIN.
-- ``decide_extractor``        — routing rules from ADR-014 §5.
+- ``select_pending_messages``       — selector with chat+account JOIN + optional
+                                      preflight classification filter.
+- ``count_by_classification``       — pending-message counts grouped by preflight
+                                      classification (for ``--dry-run`` output).
+- ``get_latest_preflight_for_chat`` — latest preflight_classification for a chat.
+- ``decide_extractor``              — routing rules from ADR-014 §5.
 - ``extract_office_or_placeholder`` — xlsx / docx / placeholder branch.
-- ``save_extraction``         — idempotent writer (ON CONFLICT DO NOTHING),
-                                with explicit ``regenerate`` overwrite.
+- ``save_extraction``               — idempotent writer (ON CONFLICT DO NOTHING),
+                                      with explicit ``regenerate`` overwrite.
 
 CLI orchestration lives in ``cli.py``.
 """
@@ -75,9 +79,7 @@ class ExtractorKind(StrEnum):
 
 # ── Selector ────────────────────────────────────────────────────────────────
 
-
-_SELECT_SQL = text(
-    """
+_SELECT_BODY = """
     SELECT m.id            AS message_id,
            mm.media_type   AS media_type,
            mm.mime_type    AS mime_type,
@@ -91,7 +93,18 @@ _SELECT_SQL = text(
     JOIN communications_telegram_chat ch
         ON ch.id = m.chat_id
     JOIN communications_telegram_account acc
-        ON acc.id = ch.owner_account_id
+        ON acc.id = ch.owner_account_id"""
+
+_LATERAL_LATEST_PREFLIGHT = """
+    LEFT JOIN LATERAL (
+        SELECT preflight_classification
+        FROM analysis_chat_analysis
+        WHERE chat_id = m.chat_id
+        ORDER BY analyzed_at DESC
+        LIMIT 1
+    ) lp ON TRUE"""
+
+_SELECT_WHERE = """
     WHERE
         (:chat_id IS NULL OR m.chat_id = :chat_id)
         AND (:message_id IS NULL OR m.id = :message_id)
@@ -101,18 +114,37 @@ _SELECT_SQL = text(
             FROM communications_telegram_message_media_extraction me
             WHERE me.message_id = m.id
               AND me.extractor_version = :extractor_version
-        ))
+        ))"""
+
+_SELECT_TAIL = """
     ORDER BY m.id
-    LIMIT :batch_size
-    """
-).bindparams(
+    LIMIT :batch_size"""
+
+_BASE_BINDPARAMS = [
     bindparam("chat_id", type_=BigInteger),
     bindparam("message_id", type_=BigInteger),
     bindparam("after_message_id", type_=BigInteger),
     bindparam("skip_existing", type_=Boolean),
     bindparam("extractor_version", type_=String),
     bindparam("batch_size", type_=Integer),
+]
+
+_SELECT_SQL = text(_SELECT_BODY + _SELECT_WHERE + _SELECT_TAIL).bindparams(
+    *_BASE_BINDPARAMS
 )
+
+
+def _build_filtered_query(normal: set[str], include_unknown: bool):
+    """Build a classification-filtered SELECT statement."""
+    parts: list[str] = []
+    if include_unknown:
+        parts.append("lp.preflight_classification IS NULL")
+    if normal:
+        parts.append("lp.preflight_classification IN :classifications")
+    class_filter = "\n    AND (" + " OR ".join(parts) + ")"
+    sql = _SELECT_BODY + _LATERAL_LATEST_PREFLIGHT + _SELECT_WHERE + class_filter + _SELECT_TAIL
+    extra = [bindparam("classifications", expanding=True)] if normal else []
+    return text(sql).bindparams(*_BASE_BINDPARAMS, *extra)
 
 
 async def select_pending_messages(
@@ -124,6 +156,7 @@ async def select_pending_messages(
     batch_size: int = 100,
     skip_existing: bool = True,
     after_message_id: int = 0,
+    allowed_classifications: set[str] | None = None,
 ) -> list[PendingMediaMessage]:
     """Return up to ``batch_size`` media messages awaiting extraction.
 
@@ -132,18 +165,33 @@ async def select_pending_messages(
     ``after_message_id`` enables cursor-style pagination (the CLI passes the
     last seen ``message_id`` of the previous batch); pass ``0`` for a full
     scan from the beginning.
+
+    ``allowed_classifications``: if ``None`` or contains ``'all'``, no preflight
+    filter is applied. Otherwise only messages from chats whose latest preflight
+    record matches are returned. ``'unknown'`` means chats with no record.
     """
-    rows = await session.execute(
-        _SELECT_SQL,
-        {
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "after_message_id": after_message_id,
-            "skip_existing": skip_existing,
-            "extractor_version": extractor_version,
-            "batch_size": batch_size,
-        },
-    )
+    base_params: dict = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "after_message_id": after_message_id,
+        "skip_existing": skip_existing,
+        "extractor_version": extractor_version,
+        "batch_size": batch_size,
+    }
+
+    if allowed_classifications is None or "all" in allowed_classifications:
+        stmt = _SELECT_SQL
+        params = base_params
+    else:
+        normal = allowed_classifications - {"unknown"}
+        include_unknown = "unknown" in allowed_classifications
+        stmt = _build_filtered_query(normal, include_unknown)
+        params = {
+            **base_params,
+            **({"classifications": list(normal)} if normal else {}),
+        }
+
+    rows = await session.execute(stmt, params)
     return [
         PendingMediaMessage(
             message_id=int(r.message_id),
@@ -156,6 +204,101 @@ async def select_pending_messages(
         )
         for r in rows
     ]
+
+
+# ── Preflight helpers ────────────────────────────────────────────────────────
+
+_COUNT_BY_CLASS_SQL = text("""
+    SELECT lp.preflight_classification AS classification,
+           COUNT(DISTINCT m.chat_id)   AS chat_count,
+           COUNT(*)                    AS message_count
+    FROM communications_telegram_message m
+    JOIN communications_telegram_message_media mm ON mm.message_id = m.id
+    LEFT JOIN LATERAL (
+        SELECT preflight_classification
+        FROM analysis_chat_analysis
+        WHERE chat_id = m.chat_id
+        ORDER BY analyzed_at DESC
+        LIMIT 1
+    ) lp ON TRUE
+    WHERE lp.preflight_classification IN :classifications
+      AND NOT EXISTS (
+        SELECT 1 FROM communications_telegram_message_media_extraction me
+        WHERE me.message_id = m.id AND me.extractor_version = :extractor_version
+      )
+    GROUP BY lp.preflight_classification
+""").bindparams(
+    bindparam("classifications", expanding=True),
+    bindparam("extractor_version", type_=String),
+)
+
+_COUNT_UNKNOWN_SQL = text("""
+    SELECT COUNT(DISTINCT m.chat_id) AS chat_count,
+           COUNT(*)                  AS message_count
+    FROM communications_telegram_message m
+    JOIN communications_telegram_message_media mm ON mm.message_id = m.id
+    LEFT JOIN LATERAL (
+        SELECT preflight_classification
+        FROM analysis_chat_analysis
+        WHERE chat_id = m.chat_id
+        ORDER BY analyzed_at DESC
+        LIMIT 1
+    ) lp ON TRUE
+    WHERE lp.preflight_classification IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM communications_telegram_message_media_extraction me
+        WHERE me.message_id = m.id AND me.extractor_version = :extractor_version
+      )
+""").bindparams(bindparam("extractor_version", type_=String))
+
+_GET_PREFLIGHT_SQL = text("""
+    SELECT preflight_classification
+    FROM analysis_chat_analysis
+    WHERE chat_id = :chat_id
+    ORDER BY analyzed_at DESC
+    LIMIT 1
+""").bindparams(bindparam("chat_id", type_=BigInteger))
+
+
+async def count_by_classification(
+    session: AsyncSession,
+    allowed_classifications: set[str],
+    extractor_version: str,
+) -> dict[str, tuple[int, int]]:
+    """Return ``{classification: (chat_count, pending_message_count)}`` for dry-run output.
+
+    ``'unknown'`` key counts chats with no preflight record at all.
+    """
+    result: dict[str, tuple[int, int]] = {}
+    normal = allowed_classifications - {"unknown", "all"}
+    include_unknown = "unknown" in allowed_classifications
+
+    if normal:
+        rows = await session.execute(
+            _COUNT_BY_CLASS_SQL,
+            {"classifications": list(normal), "extractor_version": extractor_version},
+        )
+        for row in rows:
+            result[row.classification] = (int(row.chat_count), int(row.message_count))
+        for c in normal:
+            result.setdefault(c, (0, 0))
+
+    if include_unknown:
+        row = (
+            await session.execute(_COUNT_UNKNOWN_SQL, {"extractor_version": extractor_version})
+        ).one()
+        result["unknown"] = (int(row.chat_count), int(row.message_count))
+
+    return result
+
+
+async def get_latest_preflight_for_chat(
+    session: AsyncSession,
+    chat_id: int,
+) -> str | None:
+    """Return the latest ``preflight_classification`` for a chat, or ``None`` if no record."""
+    row = (await session.execute(_GET_PREFLIGHT_SQL, {"chat_id": chat_id})).first()
+    return row.preflight_classification if row else None
 
 
 # ── Routing ─────────────────────────────────────────────────────────────────

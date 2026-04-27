@@ -101,6 +101,7 @@ def _make_args(**overrides: object) -> argparse.Namespace:
         verbose=False,
         batch_size=10,
         unload_after=False,
+        classification=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)

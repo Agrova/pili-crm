@@ -31,10 +31,12 @@ from analysis.media_extract import (
 from analysis.media_extract.service import (
     ExtractorKind,
     PendingMediaMessage,
+    count_by_classification,
     decide_extractor,
     derive_extraction_method_from_model,
     extract_image_or_fail,
     extract_office_or_placeholder,
+    get_latest_preflight_for_chat,
     save_extraction,
     select_pending_messages,
 )
@@ -51,6 +53,23 @@ logger = logging.getLogger("analysis.media_extract.cli")
 
 _EXIT_OK = 0
 _EXIT_LM_STUDIO_TIMEOUT = 2
+
+VALID_CLASSIFICATIONS: frozenset[str] = frozenset({
+    "client", "possible_client", "not_client",
+    "family", "friend", "service", "unknown", "all",
+})
+
+
+def _parse_classifications(value: str) -> str:
+    """argparse type= validator for --classification."""
+    raw = [v.strip().lower() for v in value.split(",")]
+    invalid = set(raw) - VALID_CLASSIFICATIONS
+    if invalid:
+        raise argparse.ArgumentTypeError(
+            f"Unknown classification values: {', '.join(sorted(invalid))}. "
+            f"Valid values: {', '.join(sorted(VALID_CLASSIFICATIONS))}"
+        )
+    return ",".join(raw)
 
 
 # ── SIGINT handling (one-stroke graceful, two-stroke force) ────────────────
@@ -159,6 +178,19 @@ def build_parser() -> argparse.ArgumentParser:
             "No-op on the current LM Studio version (logged via warning)."
         ),
     )
+    parser.add_argument(
+        "--classification",
+        default=None,
+        type=_parse_classifications,
+        help=(
+            "Comma-separated preflight classifications to process. "
+            "Default: 'client,possible_client' (bypassed when --chat-id is used alone). "
+            "Special values: 'unknown' includes chats without any preflight record; "
+            "'all' disables filtering entirely. "
+            "Valid: client, possible_client, not_client, family, friend, service, unknown, all. "
+            "Example: --classification client,possible_client,unknown"
+        ),
+    )
 
     return parser
 
@@ -176,6 +208,22 @@ class _Stats:
 
     def __post_init__(self) -> None:
         self.by_kind = Counter()
+
+
+def _print_classification_breakdown(
+    allowed_classifications: set[str],
+    breakdown: dict[str, tuple[int, int]],
+) -> None:
+    labels = sorted(allowed_classifications - {"all"})
+    width = max((len(lbl) for lbl in labels), default=10)
+    total_chats = sum(v[0] for v in breakdown.values())
+    total_msgs = sum(v[1] for v in breakdown.values())
+    print(f"Filter applied: {', '.join(labels)}")
+    print("Chats matching:")
+    for lbl in labels:
+        chats, msgs = breakdown.get(lbl, (0, 0))
+        print(f"  {lbl:<{width}}  {chats} chats, {msgs} messages with media pending")
+    print(f"  {'-- total --':<{width}}  {total_chats} chats, {total_msgs} messages")
 
 
 def _resolve_model_id(args: argparse.Namespace) -> str:
@@ -204,6 +252,7 @@ async def _iter_batches(
     extractor_version: str,
     batch_size: int,
     skip_existing: bool,
+    allowed_classifications: set[str],
 ) -> AsyncIterator[list[PendingMediaMessage]]:
     """Yield successive batches.
 
@@ -223,6 +272,7 @@ async def _iter_batches(
             batch_size=batch_size,
             skip_existing=skip_existing,
             after_message_id=after,
+            allowed_classifications=allowed_classifications,
         )
         if not batch:
             return
@@ -312,6 +362,7 @@ async def _has_vision_pending(
     message_id: int | None,
     extractor_version: str,
     skip_existing: bool,
+    allowed_classifications: set[str],
 ) -> bool:
     """Cheap probe: peek the first batch and check if any row needs vision."""
     peek = await select_pending_messages(
@@ -321,6 +372,7 @@ async def _has_vision_pending(
         extractor_version=extractor_version,
         batch_size=200,
         skip_existing=skip_existing,
+        allowed_classifications=allowed_classifications,
     )
     return any(decide_extractor(m) is ExtractorKind.VISION for m in peek)
 
@@ -339,6 +391,18 @@ async def main(args: argparse.Namespace) -> int:
     chat_id: int | None = args.chat_id
     message_id: int | None = args.message_id
 
+    # Determine effective classification filter.
+    classification_explicit = args.classification is not None
+    if not classification_explicit:
+        # --chat-id without --classification: bypass filter (explicit target)
+        allowed_classifications: set[str] = (
+            {"all"} if chat_id is not None else {"client", "possible_client"}
+        )
+    else:
+        allowed_classifications = set(args.classification.split(","))
+
+    logger.info("Filter: classifications=%s", sorted(allowed_classifications))
+
     _reset_shutdown_flag()
     _install_sigint_handler()
 
@@ -346,6 +410,31 @@ async def main(args: argparse.Namespace) -> int:
     started = time.monotonic()
 
     async with async_session_factory() as session:
+        # When --chat-id is combined with an explicit --classification, check
+        # whether the chat passes the filter before doing any real work.
+        if chat_id is not None and classification_explicit and "all" not in allowed_classifications:
+            actual_class = await get_latest_preflight_for_chat(session, chat_id)
+            effective = actual_class if actual_class is not None else "unknown"
+            if effective not in allowed_classifications:
+                logger.warning(
+                    "chat %s preflight_classification=%r does not match filter %s, skipping",
+                    chat_id,
+                    actual_class,
+                    sorted(allowed_classifications),
+                )
+                return _EXIT_OK
+
+        # Dry-run classification breakdown (before starting the main loop).
+        if args.dry_run and "all" not in allowed_classifications:
+            try:
+                breakdown = await count_by_classification(
+                    session, allowed_classifications, extractor_version
+                )
+            except Exception:
+                logger.exception("Failed to compute classification breakdown")
+                return 1
+            _print_classification_breakdown(allowed_classifications, breakdown)
+
         try:
             need_vision = await _has_vision_pending(
                 session,
@@ -353,6 +442,7 @@ async def main(args: argparse.Namespace) -> int:
                 message_id=message_id,
                 extractor_version=extractor_version,
                 skip_existing=skip_existing,
+                allowed_classifications=allowed_classifications,
             )
         except Exception:
             logger.exception("Failed to probe for pending vision messages")
@@ -385,6 +475,7 @@ async def main(args: argparse.Namespace) -> int:
                 extractor_version=extractor_version,
                 batch_size=args.batch_size,
                 skip_existing=skip_existing,
+                allowed_classifications=allowed_classifications,
             ):
                 for msg in batch:
                     if _shutdown_requested:
