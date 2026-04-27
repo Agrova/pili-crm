@@ -225,6 +225,9 @@ class CommunicationsTelegramMessage(Base, TimestampMixin):
     media: Mapped[CommunicationsTelegramMessageMedia | None] = relationship(
         "CommunicationsTelegramMessageMedia", back_populates="message", uselist=False
     )
+    media_extraction: Mapped[CommunicationsTelegramMessageMediaExtraction | None] = relationship(
+        "CommunicationsTelegramMessageMediaExtraction", back_populates="message", uselist=False
+    )
 
 
 class CommunicationsTelegramMessageMedia(Base):
@@ -259,6 +262,39 @@ class CommunicationsTelegramMessageMedia(Base):
 
     message: Mapped[CommunicationsTelegramMessage] = relationship(
         "CommunicationsTelegramMessage", back_populates="media"
+    )
+
+
+class CommunicationsTelegramMessageMediaExtraction(Base):
+    """Append-only extracted text content from Telegram message media (ADR-014).
+
+    Immutable — written by media_extract, deleted only via CASCADE from the
+    parent message. `updated_at` intentionally absent.
+    """
+
+    __tablename__ = "communications_telegram_message_media_extraction"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    message_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "communications_telegram_message.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        unique=True,
+    )
+    extracted_text: Mapped[str] = mapped_column(Text, nullable=False)
+    extraction_method: Mapped[str] = mapped_column(Text, nullable=False)
+    extractor_version: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+    message: Mapped[CommunicationsTelegramMessage] = relationship(
+        "CommunicationsTelegramMessage", back_populates="media_extraction"
     )
 
 

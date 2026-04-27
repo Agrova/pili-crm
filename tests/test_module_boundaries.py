@@ -55,6 +55,9 @@ _IMMUTABLE_MODELS: frozenset[str] = frozenset({
     "WarehousePendingPriceResolution",
     # Append-only media metadata — written by ingester, deleted via CASCADE (ADR-015)
     "CommunicationsTelegramMessageMedia",
+    # Append-only extracted media content — written by media_extract,
+    # deleted via CASCADE (ADR-014)
+    "CommunicationsTelegramMessageMediaExtraction",
 })
 
 
