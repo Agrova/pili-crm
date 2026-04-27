@@ -163,16 +163,42 @@ async def test_extract_image_converts_rgba_to_rgb(tmp_path):
     assert image_url.startswith("data:image/jpeg;base64,")
 
 
-# --- 6. Invalid template raises VisionAPIError ---
+# --- 6. Template mismatch → graceful degradation (not exception) ---
 
-async def test_extract_image_invalid_template_raises(tmp_path):
+async def test_template_mismatch_returns_marker_not_raises(tmp_path):
     img_path = _make_image_file(tmp_path, "photo.jpg", 200, 200)
-    bad_response = "Just some random text without the expected sections."
-    with (
-        _http_mock(bad_response),
-        pytest.raises(VisionAPIError, match="does not contain required sections"),
-    ):
-        await extract_image(img_path, MODEL_ID, ENDPOINT)
+    bad_response = "Это просто текст про машину"
+    with _http_mock(bad_response):
+        result = await extract_image(img_path, MODEL_ID, ENDPOINT)
+    assert result.extraction_method == "vision-template-mismatch"
+    assert result.text.startswith("[VISION_TEMPLATE_MISMATCH:")
+
+
+async def test_template_mismatch_with_partial_template(tmp_path):
+    img_path = _make_image_file(tmp_path, "photo.jpg", 200, 200)
+    partial_response = "Описание: Деревянная доска."  # only one section
+    with _http_mock(partial_response):
+        result = await extract_image(img_path, MODEL_ID, ENDPOINT)
+    assert result.extraction_method == "vision-template-mismatch"
+    assert result.text.startswith("[VISION_TEMPLATE_MISMATCH:")
+
+
+async def test_template_mismatch_preserves_raw_content(tmp_path):
+    img_path = _make_image_file(tmp_path, "photo.jpg", 200, 200)
+    raw_content = "x" * 500
+    with _http_mock(raw_content):
+        result = await extract_image(img_path, MODEL_ID, ENDPOINT)
+    assert result.extraction_method == "vision-template-mismatch"
+    assert raw_content in result.text
+
+
+async def test_loop_check_runs_before_template_check(tmp_path):
+    img_path = _make_image_file(tmp_path, "photo.jpg", 200, 200)
+    # Response has loop (no template) — loop-detection should win
+    looping_response = "повторяющаяся фраза " * 40
+    with _http_mock(looping_response):
+        result = await extract_image(img_path, MODEL_ID, ENDPOINT)
+    assert result.extraction_method.startswith("vision-loop")
 
 
 # --- 7. HTTP 500 raises VisionAPIError ---

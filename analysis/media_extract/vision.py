@@ -204,11 +204,18 @@ async def extract_image(
 
     if "Описание:" not in cleaned or "Текст на изображении:" not in cleaned:
         logger.warning(
-            "Vision model response for %s does not match expected template", path.name
+            "Template mismatch for %s: vision model response did not contain "
+            "required sections. Saving raw response with marker.",
+            path.name,
         )
-        raise VisionAPIError(
-            f"Vision model response for '{path.name}' does not contain required sections "
-            "'Описание:' and 'Текст на изображении:'"
+        salvaged_text = (
+            "[VISION_TEMPLATE_MISMATCH: ответ модели не содержит секций "
+            "'Описание:' и 'Текст на изображении:'. Сырой ответ модели ниже:]\n\n"
+            + cleaned
+        )
+        return VisionExtractionResult(
+            text=salvaged_text,
+            extraction_method="vision-template-mismatch",
         )
 
     return VisionExtractionResult(

@@ -204,6 +204,7 @@ class _Stats:
     saved: int = 0
     skipped_existing: int = 0
     errors: int = 0
+    template_mismatch: int = 0
     by_kind: Counter[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
@@ -306,6 +307,8 @@ async def _process_message(
 
     stats.processed += 1
     stats.by_kind[kind.value] += 1
+    if result.extraction_method == "vision-template-mismatch":
+        stats.template_mismatch += 1
     if result.extraction_method == "placeholder" and kind is not ExtractorKind.PLACEHOLDER:
         # Office/vision path that degraded into a placeholder due to a parse
         # error or a missing file. Counts as a recoverable error in the
@@ -343,6 +346,7 @@ def _print_summary(
     print(f"  Vision model:         {model_id}")
     print(f"  Processed:            {stats.processed}")
     print(f"    vision:             {stats.by_kind.get('vision', 0)}")
+    print(f"    vision-template-mismatch: {stats.template_mismatch}")
     print(f"    xlsx:               {stats.by_kind.get('xlsx', 0)}")
     print(f"    docx:               {stats.by_kind.get('docx', 0)}")
     print(f"    placeholder:        {stats.by_kind.get('placeholder', 0)}")

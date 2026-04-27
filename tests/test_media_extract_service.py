@@ -681,6 +681,34 @@ async def test_extract_image_VisionAPIError_propagates(tmp_path: Path) -> None:
         )
 
 
+async def test_service_template_mismatch_saves_to_db(tmp_path: Path) -> None:
+    exports_root = tmp_path / "exports"
+    file_dir = exports_root / SEED_PHONE / "chats" / "v"
+    file_dir.mkdir(parents=True)
+    (file_dir / "p.jpg").write_bytes(b"fake-bytes")
+
+    mismatch_text = (
+        "[VISION_TEMPLATE_MISMATCH: ответ модели не содержит секций "
+        "'Описание:' и 'Текст на изображении:'. Сырой ответ модели ниже:]\n\nraw"
+    )
+    fake_result = VisionExtractionResult(
+        text=mismatch_text,
+        extraction_method="vision-template-mismatch",
+    )
+    with patch.object(
+        service, "_vision_extract_image", new=AsyncMock(return_value=fake_result)
+    ):
+        result = await service.extract_image_or_fail(
+            _vision_msg(77),
+            exports_root,
+            model_id="qwen/qwen3-vl-30b",
+            endpoint="http://localhost:1234/v1",
+        )
+    assert result.message_id == 77
+    assert result.extraction_method == "vision-template-mismatch"
+    assert result.extracted_text == mismatch_text
+
+
 def test_derive_extraction_method_primary() -> None:
     assert (
         service.derive_extraction_method_from_model(
