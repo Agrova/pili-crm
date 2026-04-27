@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import base64
 import logging
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
 import httpx
 
+from analysis.media_extract.loop_detector import detect_repetition_loop
 from analysis.media_extract.prompts import VISION_PROMPT
 
 logger = logging.getLogger("analysis.media_extract.vision")
@@ -28,6 +30,14 @@ class VisionAPIError(VisionExtractError):
 
 class VisionImageError(VisionExtractError):
     """Ошибка чтения или обработки изображения."""
+
+
+@dataclass(frozen=True)
+class VisionExtractionResult:
+    """Result of a single vision extraction call."""
+
+    text: str
+    extraction_method: str
 
 
 def _prepare_image(path: Path, max_dimension: int) -> tuple[str, tuple[int, int], tuple[int, int]]:
@@ -82,7 +92,7 @@ async def extract_image(
     endpoint: str = "http://localhost:1234/v1",
     timeout_seconds: float = 120.0,
     max_dimension: int = 1568,
-) -> str:
+) -> VisionExtractionResult:
     """Извлекает текстовое описание изображения через vision-LLM.
 
     Raises:
@@ -150,6 +160,48 @@ async def extract_image(
 
     cleaned = _strip_fences(content)
 
+    loop_result = detect_repetition_loop(cleaned)
+
+    if loop_result.is_loop:
+        if loop_result.salvaged_prefix is not None:
+            final_text = (
+                loop_result.salvaged_prefix
+                + "\n\n[VISION_LOOP_DETECTED: модель вошла в повторение фразы "
+                + f"'{loop_result.repeated_phrase}' "
+                + f"({loop_result.repetition_count} раз), "
+                + "сохранена начальная часть ответа]"
+            )
+            logger.warning(
+                "Vision loop detected for message %s, salvaged prefix (%d chars). "
+                "Repeated phrase: %r x%d",
+                path.name,
+                len(loop_result.salvaged_prefix),
+                loop_result.repeated_phrase,
+                loop_result.repetition_count,
+            )
+            return VisionExtractionResult(
+                text=final_text,
+                extraction_method="vision-loop-salvaged",
+            )
+        else:
+            final_text = (
+                "[VISION_LOOP_DETECTED: модель вошла в повторение с самого начала, "
+                f"повторяющаяся фраза: '{loop_result.repeated_phrase}' "
+                f"({loop_result.repetition_count} раз). "
+                "Описание изображения недоступно.]"
+            )
+            logger.warning(
+                "Vision loop detected for message %s with no salvageable prefix. "
+                "Repeated phrase: %r x%d",
+                path.name,
+                loop_result.repeated_phrase,
+                loop_result.repetition_count,
+            )
+            return VisionExtractionResult(
+                text=final_text,
+                extraction_method="vision-loop-discarded",
+            )
+
     if "Описание:" not in cleaned or "Текст на изображении:" not in cleaned:
         logger.warning(
             "Vision model response for %s does not match expected template", path.name
@@ -159,4 +211,7 @@ async def extract_image(
             "'Описание:' and 'Текст на изображении:'"
         )
 
-    return "[Изображение]\n" + cleaned
+    return VisionExtractionResult(
+        text="[Изображение]\n" + cleaned,
+        extraction_method="vision",
+    )

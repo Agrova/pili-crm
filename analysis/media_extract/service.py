@@ -31,6 +31,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analysis.media_extract import office, vision
+from analysis.media_extract.vision import VisionExtractionResult
 from app.communications.models import CommunicationsTelegramMessageMediaExtraction
 
 logger = logging.getLogger("analysis.media_extract.service")
@@ -505,7 +506,7 @@ async def _vision_extract_image(
     path: Path,
     model_id: str,
     endpoint: str,
-) -> str:
+) -> VisionExtractionResult:
     return await vision.extract_image(path, model_id, endpoint)
 
 
@@ -540,7 +541,7 @@ async def extract_image_or_fail(
         )
 
     try:
-        text_out = await _vision_extract_image(abs_path, model_id, endpoint)
+        vision_result = await _vision_extract_image(abs_path, model_id, endpoint)
     except vision.VisionImageError as exc:
         logger.warning(
             "vision image error for message_id=%s file=%s: %s",
@@ -556,8 +557,13 @@ async def extract_image_or_fail(
             extraction_method="placeholder",
         )
 
+    if vision_result.extraction_method == "vision":
+        method = derive_extraction_method_from_model(model_id)
+    else:
+        method = vision_result.extraction_method
+
     return ExtractionResult(
         message_id=msg.message_id,
-        extracted_text=text_out,
-        extraction_method=derive_extraction_method_from_model(model_id),
+        extracted_text=vision_result.text,
+        extraction_method=method,
     )

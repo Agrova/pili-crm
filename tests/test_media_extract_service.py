@@ -26,7 +26,7 @@ from analysis.media_extract.service import (
     save_extraction,
     select_pending_messages,
 )
-from analysis.media_extract.vision import VisionAPIError, VisionImageError
+from analysis.media_extract.vision import VisionAPIError, VisionExtractionResult, VisionImageError
 
 EXTRACTOR_VERSION = "v1.0-test"
 SEED_PHONE = "+77471057849"
@@ -607,8 +607,9 @@ async def test_extract_image_success_returns_vision_result(tmp_path: Path) -> No
     (file_dir / "p.jpg").write_bytes(b"fake-bytes")
 
     fake_text = "[Изображение]\nОписание: x\nТекст на изображении: y"
+    fake_result = VisionExtractionResult(text=fake_text, extraction_method="vision")
     with patch.object(
-        service, "_vision_extract_image", new=AsyncMock(return_value=fake_text)
+        service, "_vision_extract_image", new=AsyncMock(return_value=fake_result)
     ):
         result = await service.extract_image_or_fail(
             _vision_msg(33),

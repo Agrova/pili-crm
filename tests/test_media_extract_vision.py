@@ -17,6 +17,7 @@ from PIL import Image
 
 from analysis.media_extract.vision import (
     VisionAPIError,
+    VisionExtractionResult,
     VisionImageError,
     extract_image,
 )
@@ -72,9 +73,11 @@ async def test_extract_image_success(tmp_path):
     img_path = _make_image_file(tmp_path, "photo.jpg", 800, 600)
     with _http_mock(VALID_RESPONSE):
         result = await extract_image(img_path, MODEL_ID, ENDPOINT)
-    assert result.startswith("[Изображение]\n")
-    assert "Описание:" in result
-    assert "Текст на изображении:" in result
+    assert isinstance(result, VisionExtractionResult)
+    assert result.extraction_method == "vision"
+    assert result.text.startswith("[Изображение]\n")
+    assert "Описание:" in result.text
+    assert "Текст на изображении:" in result.text
 
 
 # --- 2. Strips markdown fences ---
@@ -84,9 +87,9 @@ async def test_extract_image_strips_markdown_fences(tmp_path):
     fenced = f"```\n{VALID_RESPONSE}\n```"
     with _http_mock(fenced):
         result = await extract_image(img_path, MODEL_ID, ENDPOINT)
-    assert result.startswith("[Изображение]\n")
-    assert "```" not in result
-    assert "Описание:" in result
+    assert result.text.startswith("[Изображение]\n")
+    assert "```" not in result.text
+    assert "Описание:" in result.text
 
 
 # --- 3. Resizes large image ---
@@ -98,7 +101,7 @@ async def test_extract_image_resizes_large_image(tmp_path, caplog):
         _http_mock(VALID_RESPONSE),
     ):
         result = await extract_image(img_path, MODEL_ID, ENDPOINT)
-    assert result.startswith("[Изображение]\n")
+    assert result.text.startswith("[Изображение]\n")
     # Log must mention original and sent sizes
     assert "3000" in caplog.text
     assert "2000" in caplog.text
@@ -127,7 +130,7 @@ async def test_extract_image_skips_resize_for_small_image(tmp_path, caplog):
         with patch("httpx.AsyncClient", return_value=mock_ctx):
             result = await extract_image(img_path, MODEL_ID, ENDPOINT)
 
-    assert result.startswith("[Изображение]\n")
+    assert result.text.startswith("[Изображение]\n")
     # logged sizes: original == sent (no resize)
     assert "800" in caplog.text
     assert "600" in caplog.text
@@ -154,7 +157,7 @@ async def test_extract_image_converts_rgba_to_rgb(tmp_path):
     with patch("httpx.AsyncClient", return_value=mock_ctx):
         result = await extract_image(img_path, MODEL_ID, ENDPOINT)
 
-    assert result.startswith("[Изображение]\n")
+    assert result.text.startswith("[Изображение]\n")
     assert len(posted_payload) == 1
     image_url = posted_payload[0]["messages"][0]["content"][1]["image_url"]["url"]
     assert image_url.startswith("data:image/jpeg;base64,")
