@@ -31,6 +31,29 @@
 
 ## Открытые вопросы
 
+### [2026-04-27] — Конфликт preflight-записей и полного анализа ADR-011 при совпадении `analyzer_version`
+
+- **Суть:** таблица `analysis_chat_analysis` имеет UNIQUE constraint `uq_analysis_chat_analysis_chat_ver` на `(chat_id, analyzer_version)`. После боевого preflight на 850 чатах (2026-04-27) в этой таблице 850 записей с `analyzer_version = 'v1.0+qwen3-14b'`, у которых `narrative_markdown=''`, `structured_extract='{"_v":1}'`, `chunks_count=0`, заполнены поля `preflight_*` и `skipped_reason='empty'` для 435 пустых чатов. Когда ADR-011 (полный анализ, `analysis/run.py`) запустится на чатах `client + possible_client` (386 штук), у которых уже есть preflight-запись — возникнет конфликт версий, если `analysis/run.py` использует ту же `ANALYZER_VERSION = 'v1.0+qwen3-14b'`.
+- **Поведение в зависимости от логики upsert:**
+  - `INSERT ... ON CONFLICT DO UPDATE` с полным затиранием полей — preflight-метаданные потеряются.
+  - `INSERT ... ON CONFLICT DO NOTHING` — полный анализ не запишется, останется preflight-заглушка.
+  - Plain `INSERT` без ON CONFLICT — упадёт на UNIQUE.
+  Текущее поведение `analysis/run.py` не проверено в этом контексте — нужно посмотреть код перед запуском.
+- **Также:** есть check constraint `ck_analysis_chat_analysis_skipped_consistency`, который требует `narrative_markdown='' AND structured_extract='{"_v":1}'` если `skipped_reason IS NOT NULL`. Это несовместимо с обновлением нарратива при сохранении `skipped_reason`.
+- **Варианты решения:**
+  - **(A)** Общий `analyzer_version`, ADR-011 сохраняет preflight-поля при upsert. `analysis/run.py` делает `ON CONFLICT DO UPDATE` с обновлением только нарратив-полей. Поля `preflight_*` и `skipped_reason` НЕ трогаются. Требует ослабления check constraint. Плюс: одна строка на чат, простой запрос «всё что знаем про чат X». Минус: ослабление check, риск что upsert-логика будет сложной.
+  - **(B)** Разные `analyzer_version` для preflight и full analysis. Preflight пишет `'preflight-v1.0+qwen3-14b'`, full analysis — `'analysis-v1.0+qwen3-14b'` (или `'v1.0+qwen3-14b'`). На чат может быть две строки. Запрос «последнее что знаем» — через `ORDER BY analyzed_at DESC LIMIT 1`. Плюс: чёткое разделение, никаких пересечений, check constraint остаётся как есть. Минус: миграция существующих 850 записей, или новая конвенция только для будущих preflight-прогонов.
+  - **(C)** Preflight как отдельная таблица. Завести `analysis_chat_preflight (chat_id PK, classification, confidence, reason, version, classified_at)`. Плюс: чистое разделение ответственности. Минус: миграция существующих 850 записей, изменение схемы, переписывание `select_pending_chats` в preflight CLI.
+- **Текущая позиция штаба:** склоняемся к **варианту A** — минимально инвазивен, сохраняет уже сделанные 850 записей без миграции. Требует:
+  1. Аудит логики upsert в `analysis/run.py`.
+  2. Решение о судьбе check constraint `ck_analysis_chat_analysis_skipped_consistency`.
+  3. Тест-кейс «preflight для чата X → full analysis для чата X → проверка что preflight-поля сохранились».
+- **Решить ДО:** запуска полного анализа ADR-011 на чатах из preflight. Текущий выходной фильтр media_extract (`preflight_classification IN ('client', 'possible_client')`) **не блокируется** этим вопросом и реализуется независимо.
+- **Связанные ADR / задачи:** ADR-011, ADR-011-addendum-1, ADR-013 Task 3 (закрыт 2026-04-27).
+- **Чат:** Архитектурный штаб
+- **Приоритет:** **HIGH**
+- **Статус:** open
+
 ### [2026-04-26] — ADR-011 Addendum 2 — реализация распределения Mac master + PC worker
 
 - **Суть:** боевой прогон 850 unreviewed-чатов на Mac исключён из-за теплового ограничения (throttling через ~1 час непрерывной нагрузки). Решение: PC (RTX 3060 Ti, 24/7) выполняет тяжёлые LLM-прогоны как worker, Mac остаётся master с боевой БД. Sync результатов pull-моделью раз в сутки. Apply (запись orders, profile updates) — только на Mac под контролем оператора через Cowork.
@@ -414,4 +437,3 @@
 ### [2026-04-23] — Git identity и remote URL
 
 Не чиним. Функционально работает, push проходит, GitHub принимает. Косметический warning про регистр организации (`agrova` → `Agrova`) и autогенерируемый author email — игнорируются. См. архив для полного описания.
-
