@@ -10,6 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-MEDIA_EXTRACTOR_VERSION = "v1.0"
+MEDIA_EXTRACTOR_VERSION = "v1.1+qwen3-vl-8b"
 
 TELEGRAM_EXPORTS_ROOT = Path.home() / "pili-crm-data" / "tg-exports"

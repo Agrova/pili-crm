@@ -482,6 +482,10 @@ async def save_extraction(
 
 
 _KNOWN_VISION_METHODS: dict[str, str] = {
+    # LM Studio registered names
+    "qwen3-vl-30b": "vision_qwen3-vl-30b-a3b",
+    "qwen3-vl-8b": "vision_qwen3-vl-8b",
+    # HF names — kept for backward compat with smoke records
     "qwen3-vl-30b-a3b-instruct-4bit": "vision_qwen3-vl-30b-a3b",
     "qwen3-vl-8b-instruct-mlx-4bit": "vision_qwen3-vl-8b",
 }

@@ -614,7 +614,7 @@ async def test_extract_image_success_returns_vision_result(tmp_path: Path) -> No
         result = await service.extract_image_or_fail(
             _vision_msg(33),
             exports_root,
-            model_id="mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
+            model_id="qwen/qwen3-vl-30b",
             endpoint="http://localhost:1234/v1",
         )
     assert result.message_id == 33
@@ -629,7 +629,7 @@ async def test_extract_image_file_not_found_returns_placeholder(
     result = await service.extract_image_or_fail(
         _vision_msg(44),
         exports_root,
-        model_id="mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
+        model_id="qwen/qwen3-vl-30b",
         endpoint="http://localhost:1234/v1",
     )
     assert result.extraction_method == "placeholder"
@@ -652,7 +652,7 @@ async def test_extract_image_VisionImageError_returns_placeholder(
         result = await service.extract_image_or_fail(
             _vision_msg(55),
             exports_root,
-            model_id="mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
+            model_id="qwen/qwen3-vl-30b",
             endpoint="http://localhost:1234/v1",
         )
     assert result.extraction_method == "placeholder"
@@ -676,7 +676,7 @@ async def test_extract_image_VisionAPIError_propagates(tmp_path: Path) -> None:
         await service.extract_image_or_fail(
             _vision_msg(66),
             exports_root,
-            model_id="mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
+            model_id="qwen/qwen3-vl-30b",
             endpoint="http://localhost:1234/v1",
         )
 
