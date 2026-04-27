@@ -360,7 +360,7 @@ async def main(args: argparse.Namespace) -> int:
 
         if need_vision and not args.dry_run:
             try:
-                await ensure_model_loaded(model_id, args.endpoint)
+                await ensure_model_loaded(model_id, settings.LM_STUDIO_API_BASE)
             except LMStudioTimeoutError:
                 print(
                     f"Vision model {model_id} is not loaded in LM Studio. "
@@ -423,7 +423,7 @@ async def main(args: argparse.Namespace) -> int:
 
         if args.unload_after:
             try:
-                await unload_all(args.endpoint)
+                await unload_all(settings.LM_STUDIO_API_BASE)
             except Exception:
                 logger.exception("unload_all failed (non-fatal)")
 
