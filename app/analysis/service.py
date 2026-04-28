@@ -36,6 +36,10 @@ from app.analysis.exceptions import (
     AnalysisAlreadyAppliedError,
     MultipleCustomersForChatError,
 )
+from app.analysis.identity_service import (
+    auto_apply_safe_identity_updates,
+    extract_identity_to_quarantine,
+)
 from app.analysis.models import (
     AnalysisChatAnalysis,
     AnalysisChatAnalysisState,
@@ -80,6 +84,9 @@ class AnalysisApplicationResult:
     delivery_preferences_updated: bool = False
     rolled_back_count: int = 0
     ambiguous_customer_ids: list[int] | None = None
+    identities_quarantined: int = 0
+    identities_auto_applied: int = 0
+    identities_kept_pending: int = 0
 
 
 # ── Recording analyzer output ───────────────────────────────────────────────
@@ -272,44 +279,43 @@ async def apply_analysis_to_customer(
     try:
         customer_id = await get_customer_for_chat(session, chat_id)
     except MultipleCustomersForChatError as exc:
+        # ≥2 linked customers — identity attribution is operator-only.
+        # The analysis row stays for re-apply once the operator
+        # disambiguates the link.
         return AnalysisApplicationResult(
             analysis_id=analysis_id,
             customer_id=None,
             ambiguous_customer_ids=exc.customer_ids,
         )
 
-    if customer_id is None:
-        # Chat is not linked to any customer — nothing to apply. The
-        # analysis row stays in place for later ``apply_analysis_to_customer``
-        # after the operator links/creates a customer (ADR-011 §7).
-        return AnalysisApplicationResult(
-            analysis_id=analysis_id, customer_id=None
-        )
-
-    existing_entries = await repository.list_created_entities(
-        session,
-        analyzer_version=analyzer_version,
-        source_chat_id=chat_id,
-        created_by="analyzer",
-    )
+    # Force/already-applied check only when there is a customer to apply to.
+    # An unreviewed chat (customer_id=None) can't have existing journal
+    # rows for this (analyzer_version, chat_id) since nothing was applied.
     rolled_back_count = 0
-    if existing_entries:
-        if not force:
-            raise AnalysisAlreadyAppliedError(
-                analysis_id=analysis_id,
-                analyzer_version=analyzer_version,
-                chat_id=chat_id,
-                existing_entity_count=len(existing_entries),
-            )
-        rolled_back_count = await repository.delete_created_entities(
+    if customer_id is not None:
+        existing_entries = await repository.list_created_entities(
             session,
             analyzer_version=analyzer_version,
             source_chat_id=chat_id,
             created_by="analyzer",
         )
+        if existing_entries:
+            if not force:
+                raise AnalysisAlreadyAppliedError(
+                    analysis_id=analysis_id,
+                    analyzer_version=analyzer_version,
+                    chat_id=chat_id,
+                    existing_entity_count=len(existing_entries),
+                )
+            rolled_back_count = await repository.delete_created_entities(
+                session,
+                analyzer_version=analyzer_version,
+                source_chat_id=chat_id,
+                created_by="analyzer",
+            )
 
     # Skipped analyses have nothing to apply — the structured_extract is the
-    # ``{"_v": 1}`` sentinel and narrative is empty.
+    # ``{"_v": 1}`` sentinel, narrative is empty, identity is absent.
     if analysis.skipped_reason is not None:
         return AnalysisApplicationResult(
             analysis_id=analysis_id,
@@ -319,16 +325,44 @@ async def apply_analysis_to_customer(
 
     extract = MatchedStructuredExtract.model_validate(analysis.structured_extract)
 
-    profile = await get_or_create_profile_for_update(session, customer_id)
+    # Identity quarantine (ADR-011 X1). Runs before the unreviewed-chat
+    # early-return so identity from a customer-less chat is still saved
+    # (with customer_id=NULL) — operator binds it to a customer later.
+    identities_quarantined = 0
+    identities_auto_applied = 0
+    identities_kept_pending = 0
+    if extract.identity is not None:
+        identity_data = extract.identity.model_dump(exclude_none=True)
+        if identity_data:
+            extracted_ids = await extract_identity_to_quarantine(
+                session,
+                chat_id=chat_id,
+                customer_id=customer_id,
+                analyzer_version=analyzer_version,
+                identity_data=identity_data,
+            )
+            identities_quarantined = len(extracted_ids)
+            if customer_id is not None and extracted_ids:
+                metrics = await auto_apply_safe_identity_updates(
+                    session,
+                    customer_id=customer_id,
+                    extracted_ids=extracted_ids,
+                )
+                identities_auto_applied = metrics["auto_applied"]
+                identities_kept_pending = metrics["kept_pending"]
+            else:
+                identities_kept_pending = identities_quarantined
 
-    # TODO(ADR-011 identity updates): ``extract.identity`` (phone/email/city
-    # /name_guess/telegram_username) is not applied here. ADR-011 §7 says
-    # "…в соответствующие JSONB-поля профиля", but the real targets are
-    # columns on ``orders_customer`` (phone/email/telegram_username) — not
-    # JSONB-fields on ``orders_customer_profile``. Write policy (overwrite
-    # vs fill-only-when-null) is unresolved — tracked in
-    # ``06_open_questions.md`` → "ADR-011: identity updates". Deferred out
-    # of Task 2 scope.
+    # Unreviewed chat: identity is parked, no profile/orders to write.
+    if customer_id is None:
+        return AnalysisApplicationResult(
+            analysis_id=analysis_id,
+            customer_id=None,
+            identities_quarantined=identities_quarantined,
+            identities_kept_pending=identities_kept_pending,
+        )
+
+    profile = await get_or_create_profile_for_update(session, customer_id)
 
     preferences_added = 0
     if extract.preferences:
@@ -450,4 +484,7 @@ async def apply_analysis_to_customer(
         incidents_added=incidents_added,
         delivery_preferences_updated=delivery_updated,
         rolled_back_count=rolled_back_count,
+        identities_quarantined=identities_quarantined,
+        identities_auto_applied=identities_auto_applied,
+        identities_kept_pending=identities_kept_pending,
     )

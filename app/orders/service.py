@@ -265,3 +265,60 @@ async def add_order_item(
     session.add(item)
     await session.flush()
     return item
+
+
+# ── identity columns access (ADR-011 identity quarantine) ───────────────────
+#
+# These two helpers exist so ``app/analysis/identity_service.py`` can
+# read/write the four identity columns of ``orders_customer`` without
+# importing ``app.orders.models`` directly — that import is forbidden by
+# the module-boundary test ``test_analysis_module_does_not_import_orders_models``.
+
+IdentityColumn = Literal["phone", "email", "telegram_username", "name"]
+_IDENTITY_COLUMNS: tuple[IdentityColumn, ...] = (
+    "phone",
+    "email",
+    "telegram_username",
+    "name",
+)
+
+
+async def get_customer_identity_columns(
+    session: AsyncSession, customer_id: int
+) -> dict[IdentityColumn, str | None]:
+    """Snapshot of ``orders_customer`` identity columns for a customer.
+
+    Returns ``{phone, email, telegram_username, name}`` with their current
+    values (``None`` for empty nullable columns; ``name`` is NOT NULL so
+    always a string). Raises ``ValueError`` when the customer is missing.
+    """
+    customer = await session.get(OrdersCustomer, customer_id)
+    if customer is None:
+        raise ValueError(f"Customer {customer_id} not found")
+    return {
+        "phone": customer.phone,
+        "email": customer.email,
+        "telegram_username": customer.telegram_username,
+        "name": customer.name,
+    }
+
+
+async def set_customer_identity_field(
+    session: AsyncSession,
+    customer_id: int,
+    column: IdentityColumn,
+    value: str,
+) -> None:
+    """Write ``value`` into ``orders_customer.<column>`` for ``customer_id``.
+
+    ``column`` is enum-restricted to the four identity columns — callers
+    cannot mutate arbitrary fields. Raises ``ValueError`` when the customer
+    is missing. Does not commit.
+    """
+    if column not in _IDENTITY_COLUMNS:
+        raise ValueError(f"Unsupported identity column: {column!r}")
+    customer = await session.get(OrdersCustomer, customer_id)
+    if customer is None:
+        raise ValueError(f"Customer {customer_id} not found")
+    setattr(customer, column, value)
+    await session.flush()

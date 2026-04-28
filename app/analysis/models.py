@@ -16,6 +16,8 @@ from sqlalchemy import (
     Numeric,
     Text,
     UniqueConstraint,
+    func,
+    text,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
@@ -160,3 +162,99 @@ class AnalysisCreatedEntity(Base, TimestampMixin):
     entity_type: Mapped[str] = mapped_column(Text, nullable=False)
     entity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_by: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class AnalysisExtractedIdentity(Base, TimestampMixin):
+    """Quarantine table for identity fields extracted by full analysis.
+
+    LLM-extracted identity values land here with ``status='pending'`` and
+    are either auto-applied to ``orders_customer`` (only when the target
+    column is NULL **and** ``confidence='high'``) or moderated manually
+    through Cowork. The table never loses extracted data — operator
+    backlog is preferable to silent overwrite of manual entries.
+
+    ``customer_id`` is nullable: an unreviewed chat (``get_customer_for_chat``
+    returned None) still has its identity quarantined; the operator binds
+    the chat to a customer later.
+
+    Two timestamp surfaces are intentional:
+
+    - ``extracted_at`` — semantic moment of LLM extraction. Comes from the
+      analyzer run; preserved verbatim for audit even if the row is
+      written to the DB later (batch ingest, retry, etc.).
+    - ``created_at`` / ``updated_at`` (TimestampMixin) — physical DB row
+      lifecycle. ``updated_at`` advances on every status transition
+      (``pending`` → ``applied`` / ``rejected`` / ``duplicate``).
+
+    On the current pipeline ``extracted_at ≈ created_at`` but the two are
+    deliberately decoupled.
+    """
+
+    __tablename__ = "analysis_extracted_identity"
+    __table_args__ = (
+        Index(
+            "ix_extracted_identity_customer_status",
+            "customer_id",
+            "status",
+        ),
+        Index("ix_extracted_identity_chat", "chat_id"),
+        Index(
+            "ix_extracted_identity_type_status",
+            "contact_type",
+            "status",
+        ),
+        CheckConstraint(
+            "contact_type IN ('phone', 'email', 'address', 'delivery_method', "
+            "'city', 'telegram_username', 'name')",
+            name="ck_extracted_identity_contact_type",
+        ),
+        CheckConstraint(
+            "confidence IN ('high', 'medium', 'low')",
+            name="ck_extracted_identity_confidence",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'applied', 'rejected', 'duplicate')",
+            name="ck_extracted_identity_status",
+        ),
+        CheckConstraint(
+            "applied_action IS NULL OR applied_action IN "
+            "('auto_filled_empty', 'overwrite', 'add_as_secondary')",
+            name="ck_extracted_identity_applied_action",
+        ),
+        CheckConstraint(
+            "(status = 'pending') = "
+            "(applied_at IS NULL AND applied_by IS NULL "
+            "AND applied_action IS NULL)",
+            name="ck_extracted_identity_pending_consistency",
+        ),
+    )
+
+    extracted_id: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), primary_key=True
+    )
+    customer_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("orders_customer.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    chat_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("communications_telegram_chat.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    analyzer_version: Mapped[str] = mapped_column(Text, nullable=False)
+    extracted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    contact_type: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[str] = mapped_column(Text, nullable=False)
+    context_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pending'")
+    )
+    applied_action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    applied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    applied_by: Mapped[str | None] = mapped_column(Text, nullable=True)
