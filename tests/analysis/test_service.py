@@ -901,6 +901,13 @@ async def test_profile_lock_serializes_concurrent_apply(
 
     from app.config import settings
 
+    # Teardown from any previous run that left @svc_lockrace in the DB
+    # (e.g. test interrupted before its own finally block ran).
+    await db_session.execute(
+        text("DELETE FROM orders_customer WHERE telegram_id = '@svc_lockrace'")
+    )
+    await db_session.commit()
+
     # Seed a customer *and* its profile on the test's own session so both
     # workers only need to LOCK (not insert) the profile. Pre-creating the
     # profile is critical: otherwise the two workers race on the UNIQUE

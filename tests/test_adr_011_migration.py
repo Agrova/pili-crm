@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import subprocess
 
-import pytest
-from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
@@ -262,9 +260,13 @@ def test_pydantic_valid_extract() -> None:
 
 
 def test_pydantic_invalid_extra_key() -> None:
-    """Extra (unexpected) keys raise ValidationError under extra='forbid'."""
-    with pytest.raises(ValidationError):
-        StructuredExtract.model_validate({"_v": 1, "not_a_real_field": "boom"})
+    """Extra keys are silently ignored (extra='ignore') and absent from the result.
+
+    Regression guard: if extra mode is ever switched back to 'forbid', this test
+    will catch it and the corresponding MLX hotfix will need re-evaluation.
+    """
+    result = StructuredExtract.model_validate({"_v": 1, "not_a_real_field": "boom"})
+    assert "not_a_real_field" not in result.model_dump()
 
 
 # ---------------------------------------------------------------------------

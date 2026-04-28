@@ -124,9 +124,9 @@ async def test_complete_treats_timeout_as_retryable() -> None:
 
 
 async def test_default_timeout_is_300_seconds() -> None:
-    """Hotfix: timeout raised 120 → 300s after first real ADR-011 run."""
+    """Hotfix: timeout raised 120 → 300s → 900s after extended ADR-011 runs."""
     client = LMStudioClient()
-    assert client.timeout == 300.0
+    assert client.timeout == 900.0
     await client.aclose()
 
 

@@ -24,7 +24,6 @@ import pytest
 
 from analysis import matching
 from analysis.matching import (
-    MATCHING_RESPONSE_FORMAT,
     CatalogEntry,
     decide_match,
 )
@@ -175,7 +174,10 @@ async def test_decide_match_passes_response_format_to_llm() -> None:
         ]
     )
     await decide_match("рубанок Veritas #5", catalog, llm)
-    assert llm.response_formats == [MATCHING_RESPONSE_FORMAT]
+    # response_format is disabled (None) for MLX backend compatibility (hotfix 3309fe7).
+    # This assertion is a regression guard: if response_format is ever re-enabled,
+    # MLX will break again and this test will catch it.
+    assert llm.response_formats == [None]
 
 
 # ── Sanity tests on the helpers ─────────────────────────────────────────────

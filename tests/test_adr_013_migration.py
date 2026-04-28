@@ -331,15 +331,19 @@ def test_preflight_classification_rejects_unknown_class() -> None:
 
 
 def test_preflight_classification_rejects_extra_field() -> None:
-    with pytest.raises(ValidationError):
-        PreflightClassification.model_validate(
-            {
-                "classification": "client",
-                "confidence": "high",
-                "reason": "x",
-                "bonus_field": "nope",
-            }
-        )
+    """Extra fields are silently ignored (extra='ignore') and absent from the result.
+
+    Regression guard: if extra mode reverts to 'forbid', this test will catch it.
+    """
+    result = PreflightClassification.model_validate(
+        {
+            "classification": "client",
+            "confidence": "high",
+            "reason": "x",
+            "bonus_field": "nope",
+        }
+    )
+    assert "bonus_field" not in result.model_dump()
 
 
 # ---------------------------------------------------------------------------

@@ -196,6 +196,7 @@ class OrdersOrderItem(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_orders_order_item_order_id", "order_id"),
         Index("ix_orders_order_item_product_id", "product_id"),
+        Index("ix_orders_order_item_status", "status"),
         Index(
             "ix_orders_order_item_price_calculation_id",
             "price_calculation_id",

@@ -3,26 +3,43 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import subprocess
 import sys
 
+_PROJECT_ROOT = pathlib.Path(__file__).parent.parent
+_TESTS_DIR = pathlib.Path(__file__).parent
 
-def _run_pytest(env_overrides: dict[str, str]) -> subprocess.CompletedProcess[str]:
+
+def _run_pytest(
+    env_overrides: dict[str, str],
+    cwd: pathlib.Path | None = None,
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["DATABASE_URL"] = "postgresql://nobody@nowhere/none"  # defence in depth
     env.pop("TEST_DATABASE_URL", None)
     env.update(env_overrides)
+    if cwd is not None:
+        # Running from a temp dir without .env; pass project root via PYTHONPATH
+        # and use absolute path to tests/ so pytest can still discover conftest.
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{_PROJECT_ROOT}:{existing}" if existing else str(_PROJECT_ROOT)
+        pytest_target = str(_TESTS_DIR)
+    else:
+        pytest_target = "tests/"
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q"],
+        [sys.executable, "-m", "pytest", pytest_target, "--collect-only", "-q"],
         env=env,
         capture_output=True,
         text=True,
+        cwd=cwd,
     )
 
 
-def test_safety_guard_unset_test_url() -> None:
-    # TEST_DATABASE_URL not in env → check 1 fires
-    r = _run_pytest({})
+def test_safety_guard_unset_test_url(tmp_path: pathlib.Path) -> None:
+    # TEST_DATABASE_URL not in env → check 1 fires.
+    # cwd=tmp_path ensures pydantic-settings cannot re-read .env from the project root.
+    r = _run_pytest({}, cwd=tmp_path)
     assert r.returncode == 2
     assert "TEST_DATABASE_URL is not set" in r.stdout + r.stderr
 
