@@ -15,6 +15,74 @@
 
 ## Закрытые вопросы
 
+### [2026-04-28] — ADR-014 closure note: боевой media_extract на 267 чатах завершён
+
+- **Статус:** closed
+- **Закрыт:** 2026-04-28, по факту завершения боевого прогона.
+- **Контекст:** ADR-014 (media extraction pipeline) был принят и реализован Tasks 1-5; loop-detection (коммит `9655748`) и preflight-фильтр (коммит `bce25f4`) расширили базовую функциональность. Боевой прогон стартовал 2026-04-27 12:09 и завершился 2026-04-28 17:48.
+- **Финальные метрики прогона:**
+  - **Длительность боевого прогона:** 29 часов 38 минут (с 2026-04-27 12:09:48 UTC по 2026-04-28 17:48:32 UTC). Прогноз был ~16 часов — расхождение в ~2× из-за прерываний/перезапусков и более медленного фактического темпа vision-модели (~19 sec/msg против оценочных 14-15 на смоук-выборке).
+  - **Покрытие:** 6478 extracted из 7160 общего количества медиа в БД. Pending 682 (9.5%) — это медиа в чатах с preflight-классификацией `not_client` / `family` / `unknown` / `empty`, отфильтрованных по дизайну `--classification client,possible_client`. Среди целевых 6467 messages из 267 чатов — покрытие 100%.
+  - **Распределение методов экстракции:**
+    - `vision_qwen3-vl-8b` — 5002 (77.2%)
+    - `placeholder` — 931 (14.4%)
+    - `vision-loop-salvaged` — 228 (3.5%)
+    - `docx_python_docx` — 122 (1.9%)
+    - `vision-template-mismatch` — 98 (1.5%)
+    - `xlsx_openpyxl` — 97 (1.5%)
+  - **`vision-loop-discarded`:** **0**. Loop-detector (коммит `9655748`) отработал идеально — все 228 случаев зацикливания vision-модели были salvaged через извлечение валидного префикса (≥20 chars). Discarded ноль означает, что параметр `salvage_threshold=20` корректно подобран.
+  - **Распределение по `extractor_version`:**
+    - `v1.1+qwen3-vl-8b` — 6467 (боевой прогон).
+    - `v1.0` — 11 (одна секунда 2026-04-27 07:56:18, ранний смоук до закрытия предыдущего вопроса о vision-моделях). Оставлены как есть — wontfix, идентифицируются по версии, не влияют на качество данных.
+- **Известное терпимое поведение:** `vision-template-mismatch` (98 записей, 1.5%) — парсер требует обоих заголовков `Описание:` / `Текст на изображении:`, но qwen3-vl часто выдаёт только один. Данные не теряются (сохраняется raw-ответ модели с маркером). Открыта новая запись «vision-template-mismatch» от 2026-04-28 в `06_open_questions.md` для починки после первого боевого full analysis (medium priority).
+- **Связано:** ADR-014, коммиты `19be350` (vision model IDs + bump), `9655748` (loop-detection), `bce25f4` (preflight filter), `611df27` (media_extract endpoint fix).
+- **Эффект для проекта:** разблокирован запуск full analysis на 386 чатах client+possible_client. Vision-описания и docx/xlsx-экстракции готовы к использованию extraction-фазой ADR-011.
+
+### [2026-04-28] — Реализация: смена `ANALYZER_VERSION` для full analysis на `'analysis-v1.0+qwen3-14b'`
+
+- **Статус:** closed
+- **Закрыт:** 2026-04-28, коммит `9d57c4b` (`docs/feat: ANALYZER_VERSION → 'analysis-v1.0+qwen3-14b' (variant 1B without preflight migration)`).
+- **Решение:** в `app/analysis/__init__.py` `ANALYZER_VERSION_BASE` изменён с `'v1.0+qwen3-14b'` на `'analysis-v1.0+qwen3-14b'`. Существующий механизм `make_analyzer_version()` без изменений: с новой base строки получаются `'analysis-v1.0+qwen3-14b'` (default mac) и `'analysis-v1.0+qwen3-14b@pc'` (worker-tag pc). Preflight-версия `'v1.0+qwen3-14b'` в `analysis/preflight/__init__.py` оставлена без изменений — 850 существующих preflight-записей не трогаем (вариант 1B — асимметричный без миграции).
+- **Что было сделано:**
+  1. Изменено значение константы.
+  2. Регрессионные тесты `tests/analysis/test_run_unit.py` (5 шт.) обновлены под новый литерал.
+  3. `grep -rn "v1.0+qwen3-14b" app/ analysis/ tests/` — литералы full analysis обновлены, preflight-литералы оставлены.
+  4. MCP-tools / Cowork-сервисы, читающие `analysis_chat_analysis`, используют паттерн `ORDER BY analyzed_at DESC LIMIT 1` или window function — никаких правок не понадобилось.
+- **Эффект:** разблокирован full analysis на чатах из preflight без UNIQUE-конфликтов с preflight-записями. На чат теперь могут быть две строки в `analysis_chat_analysis`: одна `v1.0+qwen3-14b` (preflight), вторая `analysis-v1.0+qwen3-14b` (полный анализ).
+- **Связано:** Q-2026-04-27-01 (архитектурное решение варианта B, см. ниже), ADR-011, ADR-011 Addendum 2.
+- **Контекст возникновения записи:** была создана 2026-04-27 как реализационная задача после принятия архитектурного варианта B. См. соответствующую закрытую архитектурную запись 2026-04-27.
+
+### [2026-04-28] — Пакет техдолга — pytest failures + pyproject.toml + ix-расхождение autogenerate
+
+- **Статус:** closed
+- **Закрыт:** 2026-04-28, коммит `66fd002` (TechDebtPack 7 подзадач, 8 файлов).
+- **Решение:** все 7 подзадач закрыты одним пакетным коммитом:
+  1. ✅ `pyproject.toml` build-backend: `setuptools.backends.legacy:build` → `setuptools.build_meta`. `pip install -e .` теперь работает в чистом venv.
+  2. ✅ `test_safety_guard_unset_test_url`: subprocess запускается с явной изоляцией от `.env`.
+  3. ✅ `test_decide_match_passes_response_format_to_llm`: ассерт обновлён под `[None]` (после хотфикса MLX `response_format=None` в коммите `3309fe7`).
+  4. ✅ `test_pydantic_invalid_extra_key` + `test_preflight_classification_rejects_extra_field`: ожидание инвертировано — проверяем что лишнее поле НЕ попадает в результирующий объект (после хотфикса `extra='ignore'`).
+  5. ✅ `test_profile_lock_serializes_concurrent_apply`: добавлен teardown с явным удалением customer'а с `telegram_id='@svc_lockrace'`.
+  6. ✅ `test_default_timeout_is_300_seconds`: исправлена константа.
+  7. ✅ `ix_orders_order_item_status` autogenerate drift: ревизия моделей и миграций приведена в соответствие.
+- **Результат:** **485 passed / 0 failed** в полном pytest suite. Pre-existing failures, накопленные с разных задач, полностью устранены. Окружение через `pip install -e .` теперь работает.
+- **Связано:** ADR-011, hotfix #3 (`13b8d42`), ADR-007/008 миграции.
+
+### [2026-04-28] — Фактический размер seed MVP — точечная правка документации
+
+- **Статус:** closed
+- **Закрыт:** 2026-04-28, коммит `c42c6de` (`docs: 128 vs 133 (товары vs позиции заказов)`).
+- **Решение:** все упоминания `133` в `docs/` проверены на контекст. Где речь была про **товары** (catalog_product) — заменено на `128`. Где про **позиции** заказов (orders_order_item) — оставлено `133` (это и есть число позиций). Sanity check: `grep -rn "133" docs/` — все оставшиеся упоминания относятся к позициям заказа.
+- **Эффект:** документация консистентна с фактическим размером seed MVP: 36 клиентов, **128 товаров** (catalog_product), 62 заказа, **133 позиции** (orders_order_item).
+
+### [2026-04-28] — ADR-008: расположение `calculate_weighted_price`
+
+- **Статус:** closed
+- **Закрыт:** 2026-04-28, коммит `6f67659` (`calculate_weighted_price (generic, для ADR-008 Pack 2b)`).
+- **Решение:** функция `calculate_weighted_price(prices: list[Decimal], quantities: list[int]) -> Decimal` создана в `app/pricing/service.py`. Pure-функция без БД-доступа. Покрыта юнит-тестами (3-5 кейсов).
+- **Эпизод pre-flight:** Claude Code обнаружил **уже существующую функцию с тем же именем** в кодовой базе (старая private-имплементация для ADR-008 weighted_average ветки). Чтобы не сломать существующих потребителей, старая функция была **переименована в `_weighted_price_pair`** (для пары значений old/new), новая generic-функция `calculate_weighted_price` принимает списки произвольной длины. Хороший пример того, что pre-flight Claude Code в Phase 1 reading-only режиме катит — обнаружение коллизии до начала кодирования сэкономило одну итерацию.
+- **Эффект:** разблокирована реализация ADR-008 Пакета 2b (warehouse pending price resolution через generic weighted_average).
+- **Связано:** ADR-008, будущий Pack 2b ADR-008.
+
 ### [2026-04-27] — Расхождение имён vision-моделей в `app/config.py` vs LM Studio + отсутствие модели в `extractor_version`
 
 - **Статус:** closed
