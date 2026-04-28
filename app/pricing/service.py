@@ -392,7 +392,7 @@ def calculate_manufacturer_price(
 # ---------------------------------------------------------------------------
 
 
-def calculate_weighted_price(
+def _weighted_price_pair(
     existing_quantity: Decimal,
     existing_price: Decimal,
     new_quantity: Decimal,
@@ -412,6 +412,49 @@ def calculate_weighted_price(
         existing_quantity * existing_price + new_quantity * new_price
     ) / total
     return raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def calculate_weighted_price(
+    prices: list[Decimal],
+    quantities: list[int],
+) -> Decimal:
+    """Calculate quantity-weighted average price.
+
+    Formula:
+        weighted_avg = sum(prices[i] * quantities[i]) / sum(quantities[i])
+
+    Both lists must have equal length and at least one element. All
+    quantities must be positive (> 0). All prices must be non-negative
+    (>= 0).
+
+    Returns the weighted average as Decimal, NOT rounded — caller is
+    responsible for applying ADR-004 rounding policy if needed.
+
+    Raises:
+        ValueError: lists are empty, lists have different lengths,
+            any quantity <= 0, any price < 0, or sum of quantities
+            is zero (only possible if all quantities are 0, but that
+            is already caught by the per-element check).
+    """
+    if not prices or not quantities:
+        raise ValueError("prices and quantities must not be empty")
+    if len(prices) != len(quantities):
+        raise ValueError(
+            f"prices and quantities must have equal length, got {len(prices)} and {len(quantities)}"
+        )
+    for q in quantities:
+        if q <= 0:
+            raise ValueError(f"all quantities must be positive (> 0), got quantity={q}")
+    for p in prices:
+        if p < _ZERO:
+            raise ValueError(f"all prices must be non-negative (>= 0), got price={p}")
+
+    total_qty = sum(quantities)
+    if total_qty == 0:
+        raise ValueError("sum of quantities must be > 0")
+
+    weighted_sum = sum(p * q for p, q in zip(prices, quantities, strict=True))
+    return weighted_sum / Decimal(total_qty)
 
 
 # ---------------------------------------------------------------------------

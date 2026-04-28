@@ -16,6 +16,7 @@ from app.pricing.service import (
     allocate_order_discount,
     calculate_manufacturer_price,
     calculate_retail_price,
+    calculate_weighted_price,
 )
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     "calculate_retail_price",
     "calculate_manufacturer_price",
     "allocate_order_discount",
+    "calculate_weighted_price",
     # Schemas
     "RetailPriceInput",
     "ManufacturerPriceInput",
