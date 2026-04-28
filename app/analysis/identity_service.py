@@ -47,14 +47,23 @@ _LLM_KEY_TO_CONTACT_TYPE: dict[str, str] = {
     "name_guess": "name",
 }
 
+# Full mapping contact_type → orders_customer column for operator-driven
+# overwrite (ADR-011 X1). Used by crm-mcp/tools/apply_identity_update.py and
+# list_pending_identity_updates.py to map quarantine contact_type to the
+# OrdersCustomer column. Single source of truth — do not duplicate locally.
+OPERATOR_OVERWRITE_COLUMNS: dict[str, IdentityColumn] = {
+    "phone": "phone",
+    "email": "email",
+    "telegram_username": "telegram_username",
+    "name": "name",
+}
+
 # Subset of contact_types where auto-apply to ``orders_customer`` is
 # technically possible. ``name`` is intentionally excluded: the column is
 # NOT NULL so the "fill empty" gate never opens — operator must drive
 # any name change through manual moderation.
 _AUTO_APPLY_COLUMNS: dict[str, IdentityColumn] = {
-    "phone": "phone",
-    "email": "email",
-    "telegram_username": "telegram_username",
+    k: v for k, v in OPERATOR_OVERWRITE_COLUMNS.items() if k != "name"
 }
 
 _DEFAULT_CONFIDENCE = "medium"

@@ -115,3 +115,49 @@ Known operational notes (to watch during real use):
 - Reject re-processing: chat with review_status NOT IN (NULL, 'unreviewed')
   raises ValueError. Re-link of an already-linked chat is a separate
   admin operation (future tool).
+
+## 2026-04-29 — Added identity quarantine tools (ADR-011 X1)
+
+Two new tools surfacing the `analysis_extracted_identity` quarantine
+table to Cowork after full analysis writes pending rows:
+
+- `list_pending_identity_updates(customer_id)` — read-only. Lists pending
+  rows sorted by confidence (high → medium → low), then `extracted_at` DESC.
+  Includes `current_customer_value` for each row so the operator sees what
+  an `overwrite` would replace.
+- `apply_identity_update(extracted_id, action)` — write. `action` is one of
+  `overwrite` / `reject` / `add_as_secondary`.
+
+Total tools: 13.
+
+Known operational notes (to watch during real use):
+
+- **Email UNIQUE collision is structured, not an error.** `overwrite` for
+  `contact_type='email'` runs the UPDATE inside a SAVEPOINT
+  (`session.begin_nested()`). On UNIQUE violation the savepoint rolls
+  back, the quarantine row stays `pending`, and the response is
+  `{"error": "email_unique_collision", "conflicting_customer_id": N}`.
+  Cowork should ask the operator: "Email уже у клиента N — переключиться
+  на add_as_secondary, отклонить, или сначала разобраться с дубликатом?"
+- **`name` overwrite is destructive.** `orders_customer.name` is NOT NULL,
+  so overwrite always replaces an existing value. Cowork must show the
+  current value (from `current_customer_value` in `list_pending`) and ask
+  explicit confirmation. Critical case: chat 6544 (Kristina) — we will
+  overwrite a placeholder name with the LLM-extracted real name.
+- **`customer_id IS NULL` quarantine.** Identity extracted from a chat
+  that was never linked to a customer lives with `customer_id=NULL`.
+  `apply_identity_update` for such a row returns
+  `{"error": "unlinked_chat_quarantine", "chat_id": M}` — Cowork must
+  prompt the operator to run `link_chat_to_customer` first.
+- **`add_as_secondary` not implemented.** Returns
+  `{"error": "not_yet_implemented"}` with no DB writes. Reserved for the
+  future `customer_contacts` table — until then Cowork should fall back to
+  `overwrite` (with operator confirmation) or `reject`.
+- **No-target contact_types.** `city`, `address`, `delivery_method` have
+  no destination column on `orders_customer` — `overwrite` returns
+  `{"error": "no_target_column", "contact_type": "..."}`. Cowork should
+  recognise these belong in `OrdersCustomerProfile` (delivery_preferences)
+  and not propose `overwrite` for them.
+- **All pre-validation errors are structured dicts**, not exceptions —
+  Cowork can branch on `result["error"]` cleanly. ValueError is reserved
+  for programmer bugs (wrong arg type).

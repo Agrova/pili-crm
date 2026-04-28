@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from tools import (
     add_to_stock,
+    apply_identity_update,
     create_customer,
     create_order,
     find_customer,
     get_unreviewed_chats,
     link_chat_to_customer,
     list_customers,
+    list_pending_identity_updates,
     match_shipment,
     pending_orders,
     search_products,
@@ -28,6 +30,8 @@ TOOLS = (
     create_order,
     get_unreviewed_chats,
     link_chat_to_customer,
+    list_pending_identity_updates,
+    apply_identity_update,
 )
 
 __all__ = [
@@ -43,4 +47,6 @@ __all__ = [
     "create_order",
     "get_unreviewed_chats",
     "link_chat_to_customer",
+    "list_pending_identity_updates",
+    "apply_identity_update",
 ]
