@@ -31,142 +31,138 @@
 
 ## Открытые вопросы
 
-### [2026-04-27] — Конфликт preflight-записей и полного анализа ADR-011 при совпадении `analyzer_version`
+### [2026-04-27] — Реализация: смена `ANALYZER_VERSION` для full analysis на `'analysis-v1.0+qwen3-14b'`
 
-- **Суть:** таблица `analysis_chat_analysis` имеет UNIQUE constraint `uq_analysis_chat_analysis_chat_ver` на `(chat_id, analyzer_version)`. После боевого preflight на 850 чатах (2026-04-27) в этой таблице 850 записей с `analyzer_version = 'v1.0+qwen3-14b'`, у которых `narrative_markdown=''`, `structured_extract='{"_v":1}'`, `chunks_count=0`, заполнены поля `preflight_*` и `skipped_reason='empty'` для 435 пустых чатов. Когда ADR-011 (полный анализ, `analysis/run.py`) запустится на чатах `client + possible_client` (386 штук), у которых уже есть preflight-запись — возникнет конфликт версий, если `analysis/run.py` использует ту же `ANALYZER_VERSION = 'v1.0+qwen3-14b'`.
-- **Поведение в зависимости от логики upsert:**
-  - `INSERT ... ON CONFLICT DO UPDATE` с полным затиранием полей — preflight-метаданные потеряются.
-  - `INSERT ... ON CONFLICT DO NOTHING` — полный анализ не запишется, останется preflight-заглушка.
-  - Plain `INSERT` без ON CONFLICT — упадёт на UNIQUE.
-  Текущее поведение `analysis/run.py` не проверено в этом контексте — нужно посмотреть код перед запуском.
-- **Также:** есть check constraint `ck_analysis_chat_analysis_skipped_consistency`, который требует `narrative_markdown='' AND structured_extract='{"_v":1}'` если `skipped_reason IS NOT NULL`. Это несовместимо с обновлением нарратива при сохранении `skipped_reason`.
-- **Варианты решения:**
-  - **(A)** Общий `analyzer_version`, ADR-011 сохраняет preflight-поля при upsert. `analysis/run.py` делает `ON CONFLICT DO UPDATE` с обновлением только нарратив-полей. Поля `preflight_*` и `skipped_reason` НЕ трогаются. Требует ослабления check constraint. Плюс: одна строка на чат, простой запрос «всё что знаем про чат X». Минус: ослабление check, риск что upsert-логика будет сложной.
-  - **(B)** Разные `analyzer_version` для preflight и full analysis. Preflight пишет `'preflight-v1.0+qwen3-14b'`, full analysis — `'analysis-v1.0+qwen3-14b'` (или `'v1.0+qwen3-14b'`). На чат может быть две строки. Запрос «последнее что знаем» — через `ORDER BY analyzed_at DESC LIMIT 1`. Плюс: чёткое разделение, никаких пересечений, check constraint остаётся как есть. Минус: миграция существующих 850 записей, или новая конвенция только для будущих preflight-прогонов.
-  - **(C)** Preflight как отдельная таблица. Завести `analysis_chat_preflight (chat_id PK, classification, confidence, reason, version, classified_at)`. Плюс: чистое разделение ответственности. Минус: миграция существующих 850 записей, изменение схемы, переписывание `select_pending_chats` в preflight CLI.
-- **Текущая позиция штаба:** склоняемся к **варианту A** — минимально инвазивен, сохраняет уже сделанные 850 записей без миграции. Требует:
-  1. Аудит логики upsert в `analysis/run.py`.
-  2. Решение о судьбе check constraint `ck_analysis_chat_analysis_skipped_consistency`.
-  3. Тест-кейс «preflight для чата X → full analysis для чата X → проверка что preflight-поля сохранились».
-- **Решить ДО:** запуска полного анализа ADR-011 на чатах из preflight. Текущий выходной фильтр media_extract (`preflight_classification IN ('client', 'possible_client')`) **не блокируется** этим вопросом и реализуется независимо.
-- **Связанные ADR / задачи:** ADR-011, ADR-011-addendum-1, ADR-013 Task 3 (закрыт 2026-04-27).
-- **Чат:** Архитектурный штаб
-- **Приоритет:** **HIGH**
+- **Суть:** в `analysis/run.py` (full analysis ADR-011) текущая константа `ANALYZER_VERSION` совпадает с preflight-версией (`v1.0+qwen3-14b`). Это приведёт к UNIQUE-конфликту при попытке записать full-analysis-результат на чат, у которого уже есть preflight-запись. Принятое архитектурное решение (Q-2026-04-27-01, перенесён в `06_open_questions_archive.md` 2026-04-27, **вариант B**) — использовать **разные версии** для preflight и full analysis.
+- **Принятое имя версии (2026-04-27, вариант 1B — асимметричный без миграции):**
+  - Preflight: `'v1.0+qwen3-14b'` — **остаётся как есть** (850 существующих записей не трогаем, `analysis/preflight/__init__.py:PREFLIGHT_VERSION` без изменений).
+  - Full analysis: `'analysis-v1.0+qwen3-14b'` — новый префикс `'analysis-'` для семантической прозрачности.
+  - Через год при чтении БД префикс `'analysis-'` подскажет «это полный анализ», его отсутствие — «это preflight-стаб без нарратива».
+- **Что нужно сделать:**
+  1. В `app/analysis/__init__.py` (или там где определена `ANALYZER_VERSION_BASE`, см. коммит `90da591` ADR-011 Addendum 2) изменить значение `ANALYZER_VERSION_BASE` с `'v1.0+qwen3-14b'` на `'analysis-v1.0+qwen3-14b'`.
+  2. Существующий механизм `make_analyzer_version()` (формат `<base>@<worker_tag>`) **продолжает работать без изменений**: с новой base строки получаются `'analysis-v1.0+qwen3-14b'` (default mac, без суффикса) и `'analysis-v1.0+qwen3-14b@pc'` (worker-tag pc).
+  3. Обновить регрессионные тесты в `tests/analysis/test_run_unit.py` (5 шт., добавлены `90da591`): `test_make_analyzer_version_default_mac_no_suffix`, `test_make_analyzer_version_pc_with_suffix`, `test_make_analyzer_version_invalid_tag_raises`, `test_run_cli_worker_tag_validation`, `test_run_no_apply_skips_apply_call`. Заменить ожидаемые литералы `'v1.0+qwen3-14b'` на `'analysis-v1.0+qwen3-14b'`.
+  4. Поиск других мест с зашитой `'v1.0+qwen3-14b'` в коде или тестах: `grep -rn "v1.0+qwen3-14b" app/ analysis/ tests/`. Все литералы, относящиеся к full analysis (analysis/run.py и related), обновить. Литералы, относящиеся к **preflight** (`analysis/preflight/`), **не трогать** — preflight остаётся `'v1.0+qwen3-14b'`.
+  5. Проверить MCP-tools / Cowork-сервисы, которые читают `analysis_chat_analysis`. Запросы вида «последнее что знаем про чат X» должны идти через `ORDER BY analyzed_at DESC LIMIT 1` (не через точное совпадение версии). Это паттерн, уже применённый в media_extract фильтре по preflight (коммит `bce25f4`).
+- **Решить ДО:** запуска full analysis ADR-011 на чатах из preflight (~386 чатов `client + possible_client`).
+- **Связанные ADR / задачи:** ADR-011, ADR-011 Addendum 2 (`make_analyzer_version`), Q-2026-04-27-01 (архивная — обоснование выбора варианта B).
+- **Чат:** Prompt Factory for Claude Code (мини-задача, Sonnet 4.6 + Medium, ~30-60 минут)
+- **Приоритет:** medium (не блокирует текущий media_extract; блокирует следующий этап — full analysis)
 - **Статус:** open
 
-### [2026-04-27] — Расхождение имён vision-моделей в `app/config.py` vs LM Studio + отсутствие модели в `extractor_version`
+### [2026-04-27] — Batch-commit гранулярность в `analysis/run.py` и `analysis/media_extract/cli.py` — риск потери работы при сбое
 
-- **Суть:** комплексный долг по идентификации vision-модели в media_extract pipeline:
-  - В `app/config.py` зашиты HF-имена: `MEDIA_EXTRACT_MODEL_PRIMARY = "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit"`, `MEDIA_EXTRACT_MODEL_FALLBACK = "mlx-community/Qwen3-VL-8B-Instruct-MLX-4bit"`. В LM Studio эти ID не существуют — там `qwen/qwen3-vl-30b` и `qwen/qwen3-vl-8b`. Скрипт обращается к LM Studio с несуществующими ID, но LM Studio как-то это разруливает (возможно — алиасит или отдаёт загруженную модель независимо от запроса).
-  - В `analysis/media_extract/__init__.py` зашито `MEDIA_EXTRACTOR_VERSION = "v1.0"` без указания модели. Это нарушает стандарт проекта, по которому версия LLM-конвейера должна включать модель: например, `analysis/preflight/__init__.py` имеет `PREFLIGHT_VERSION = "v1.0+qwen3-14b"` (см. правило в памяти про versioning стандарт).
-  - В результате 6467 записей боевого media_extract от 2026-04-27 уйдут в БД с `extractor_version='v1.0'` без идентификации модели. Через месяц «какой моделью обрабатывали корпус?» — ответить по БД нельзя, придётся восстанавливать через timeline и логи.
-- **Контекст:** обнаружено при подготовке боевого прогона media_extract 2026-04-27. Dry-run корректно нашёл 267 чатов / 6467 messages, но в выводе модель помечена как 30B, хотя реально работает 8B. Решено идти в прогон **как есть** (вариант A) — фикс будет отдельной мини-задачей **после** прогона.
+- **Суть:** при боевом media_extract на 267 чатах (2026-04-27) обнаружено, что записи в БД пишутся **batch'ами по ~100 messages с интервалом ~25-40 минут** (commit-per-chat: один чат целиком обрабатывается, потом коммитится одной транзакцией). Для крупных чатов (chat 5950 — 100+ photo подряд) это означает, что 25-40 минут реальной работы LM Studio **держится в памяти Python-процесса**, и при любом сбое (OOM, kill, sleep mode Mac, выгрузка модели в LM Studio) **теряется целиком**.
+- **Наблюдаемое поведение:**
+  - Все ~400 записей первого batch имеют **одинаковый timestamp** (`14:17:19.245919+00`), все ~100 второго — также одинаковый timestamp на ~26 минут позже. Это commit per chat.
+  - Идемпотентность работает на уровне **чата**: при перезапуске пропускаются полностью обработанные чаты. Чат на середине обработки (memory before commit) перерабатывается **целиком** заново.
+  - Loss-window на одном чате с 100+ медиа: **до 30 минут реального LM Studio compute**.
+- **Где проявляется:** `analysis/media_extract/cli.py` (текущий live-прогон) и **то же самое наверняка в `analysis/run.py`** (full analysis ADR-011) — обе функции используют похожий паттерн «обработать чат целиком → закоммитить».
 - **Что нужно сделать:**
-  1. Привести имена в `app/config.py` к формату LM Studio (`qwen/qwen3-vl-30b`, `qwen/qwen3-vl-8b`).
-  2. Расширить `MEDIA_EXTRACTOR_VERSION` до формата `"v1.1+qwen3-vl-8b"` (инкремент мажорной версии важен, чтобы новые записи отличались от текущих 6467 с `v1.0`).
-  3. Обновить тесты, если они зашиты на конкретное имя модели.
-  4. Не делать массовый backfill 6467 записей — оставить как есть с `v1.0` в качестве «исторической метки прогона на смешанной/неявной модели».
-- **Связанные ADR / задачи:** ADR-014 (media extraction pipeline), правило versioning из памяти проекта (#14).
-- **Чат:** Prompt Factory for Claude Code (мини-задача на 30-60 минут)
-- **Приоритет:** medium (не блокирует текущий прогон, но блокирует чистоту аналитики при следующих прогонах vision)
+  1. **Аудит** — Claude Code должен прочитать `analysis/media_extract/cli.py` и `analysis/run.py` (через `_process_chat` или эквивалент), найти точку commit. Описать в отчёте: где именно `session.commit()`, на каком уровне (per-chat / per-message / batch).
+  2. **Изменение гранулярности** — commit per N messages (например, N=10), либо commit per-message с production-friendly оптимизацией (не ставить session.flush на каждое сообщение, использовать `add_all` + commit). Точное решение — на pre-flight Claude Code.
+  3. **Тесты** — добавить тест, который убивает процесс между `add` и `commit`, перезапускает и проверяет идемпотентность по message-уровню (а не chat-уровню).
+- **Когда решать:** **до запуска full analysis ADR-011 на 386 чатах**. Прогон в среднем будет идти десятки часов на mac, потеря 30+ минут vision-работы при каждом сбое — критично. Текущий media_extract прогон **уже идёт** (не прерываем), но следующий full analysis запускаем только после фикса.
+- **НЕ блокирует:** текущий media_extract на 267 чатах (он завершится в ~ночь-утро 28 апреля, идемпотентность есть на уровне chat).
+- **Связанные:** ADR-011 (full analysis), ADR-014 (media_extract).
+- **Чат:** Prompt Factory for Claude Code (после media_extract; Sonnet 4.6 + Medium, ~60-90 минут).
+- **Приоритет:** **HIGH** (блокер для следующего полного прогона).
 - **Статус:** open
 
 ### [2026-04-26] — ADR-011 Addendum 2 — реализация распределения Mac master + PC worker
 
 - **Суть:** боевой прогон 850 unreviewed-чатов на Mac исключён из-за теплового ограничения (throttling через ~1 час непрерывной нагрузки). Решение: PC (RTX 3060 Ti, 24/7) выполняет тяжёлые LLM-прогоны как worker, Mac остаётся master с боевой БД. Sync результатов pull-моделью раз в сутки. Apply (запись orders, profile updates) — только на Mac под контролем оператора через Cowork.
 - **Архитектурное решение:** зафиксировано в `ADR-011-addendum-2-pc-worker.md` (2026-04-26).
+- **Принятая схема координации Mac+PC (2026-04-27, фиксированное деление пополам upfront + sync раз в сутки):**
+  - **Сетевая реальность:** PC дома 24/7. Mac кочует с оператором (офис, дорога, дом). В одной локалке только когда Mac дома. Большую часть времени — разные сети. **Online-координация через сетевое подключение к prod БД невозможна.**
+  - **Каждый worker — своя БД.** PC БД на PC, Mac БД на Mac. Нет общей prod БД, нет advisory lock'ов, нет онлайн-координации.
+  - **Чаты делятся пополам upfront по `chat_id`.** Например, для full analysis на 386 чатах client+possible_client: PC получает фиксированный диапазон ~193 чата (нижняя половина по chat_id), Mac — ~193 чата (верхняя половина). Деление детерминированное, заранее известно каждой стороне.
+  - **Запуск:** `python3 -m analysis.run --chat-id-range 1..193 --worker-tag pc` на PC (24/7 в `nohup`, завершается сам когда диапазон обработан). На Mac — `--chat-id-range 194..386 --worker-tag mac` сессиями по 1-2 часа когда оператор за машиной.
+  - **Sync раз в сутки (по команде оператора):** Mac пуллит результаты PC (`analyzer_version LIKE '%@pc'`) с PC БД через ad-hoc подключение когда Mac дома (USB-сеть, локалка, или промежуточная флешка). Записи мерджатся в Mac БД через `INSERT ... ON CONFLICT DO NOTHING` (UNIQUE на `(chat_id, analyzer_version)` гарантирует отсутствие дублей).
+  - **«PC добивает остаток»:** когда PC закончил свой диапазон 1..193 → завершился. Если Mac ещё не обработал свой остаток (например, осталось 30 чатов) — оператор передаёт PC список конкретных chat_id из остатка Mac: `python3 -m analysis.run --chat-ids 250,251,255,260,... --worker-tag pc`. PC доделывает.
+  - **Sync identity quarantine:** ОБЕ таблицы (`analysis_chat_analysis` И `analysis_extracted_identity`, см. запись про identity quarantine X1) синхронизируются вместе. Поскольку PC и Mac обрабатывают **непересекающиеся** диапазоны chat_id — записи в `analysis_extracted_identity` тоже не пересекаются (FK на chat_id). PK конфликтов между worker'ами не будет, потому что зоны зон.
 - **Прогресс:**
   1. ✅ **CLI-флаги `--worker-tag` и `--no-apply` в `analysis/run.py`** — реализовано коммитом `90da591` (2026-04-26). Mac (default tag=mac) пишет `v1.0+qwen3-14b` без суффикса (обратная совместимость), PC (`--worker-tag pc`) пишет `v1.0+qwen3-14b@pc`. `--no-apply` пропускает фазу apply на PC. +5 регрессионных тестов в `tests/analysis/test_run_unit.py`.
-  2. ⏸ **Развёртывание PC:** Docker Desktop + Postgres + миграции + импорт subset БД (chats + messages) с Mac. Runbook готов: `runbook_pc_deployment.md`. Ждёт оператора.
-  3. ⏸ **Sync-скрипт `scripts/sync_pc_analyses.sh`** — Mac тянет с PC записи `analyzer_version LIKE '%@pc'` через `pg_dump`/`psql` с `ON CONFLICT DO NOTHING`. Реализуется отдельной задачей через Prompt Factory после успеха п.2.
+  2. ⏸ **Параметр `--chat-id-range` или `--chat-ids` в `analysis/run.py`** — для разделения работы upfront. **Новый item, нужен до full analysis.** Pre-flight Claude Code должен проверить — возможно параметр уже есть в каком-то виде (`--chat-id` поддерживается, нужен range/list).
+  3. ⏸ **Развёртывание PC:** Docker Desktop + Postgres + миграции + импорт subset БД (chats + messages) с Mac. Runbook готов: `runbook_pc_deployment.md`. Ждёт оператора.
+  4. ⏸ **Sync-скрипт `scripts/sync_pc_analyses.sh`** — Mac тянет с PC записи `analyzer_version LIKE '%@pc'` через `pg_dump`/`psql` с `ON CONFLICT DO NOTHING`. Должен покрывать ОБЕ таблицы: `analysis_chat_analysis` + `analysis_extracted_identity`. Реализуется отдельной задачей через Prompt Factory.
 - **Следующие шаги:**
   - Оператор: развёртывание PC по runbook'у.
-  - Sanity-прогон chat_id=6017 на PC с `--worker-tag=pc --no-apply` (~25 минут).
-  - Боевой прогон 850 чатов на PC в фоне (~15 суток).
-  - Параллельно: реализация sync-скрипта, ad-hoc sync с Mac, оператор делает review + apply через Cowork.
+  - Sanity-прогон 1 чата на PC с `--worker-tag=pc --no-apply` (~25 минут).
+  - Реализация `--chat-id-range` параметра + sync-скрипта (Prompt Factory).
+  - Запуск full analysis с фиксированным делением: PC берёт 1..193, Mac берёт 194..386. Параллельно работают, sync раз в сутки.
+- **Связанные:** запись «Конкурентность `analysis_chat_analysis_state`» — больше **не блокер** при фиксированном делении пополам (worker'ы не пересекаются), но остаётся открытой как defense-in-depth и для будущего work-stealing если когда-то перейдём на общую БД.
 - **Замещает:** open question «`ANALYZER_VERSION` не отражает фактическую модель» — закрыто коммитом `90da591`, перенесено в архив.
 - **Чат:** Архитектурный штаб (отслеживание прогресса). Подзадачи реализации — Prompt Factory.
 - **Приоритет:** **HIGH** (текущая основная архитектурная активность).
 - **Статус:** in-progress
 
-### [2026-04-26] — Конкурентность `analysis_chat_analysis_state` при распределённой работе
+### [2026-04-26] — Конкурентность `analysis_chat_analysis_state` при распределённой работе (downgraded 2026-04-27)
 
 - **Суть:** PK таблицы `analysis_chat_analysis_state` — `chat_id` (один ключ, без worker-разделения). При одновременной работе Mac (без `--no-apply`, делает apply) и PC (`--no-apply`, только analysis) над одним `chat_id` оба процесса пишут в state через `set_stage`, `update_chunk_progress`, `mark_done`, `mark_failed`. Возможны:
   - Конфликт INSERT при `set_stage` вначале (последняя запись затирает первую → потеря состояния первого worker'а).
   - Race условие на `mark_done` (одна машина пометит done, другая в это время ещё в фазе extract → инконсистентность).
-- **Когда проявится:** не блокер для текущего этапа (одна машина за раз обрабатывает один чат). Проблема всплывёт, если оператор по ошибке запустит Mac и PC параллельно над одним chat_id, или если будет реализована автоматическая балансировка чатов между Mac и PC.
-- **Варианты решения:**
+- **Принятое решение по координации Mac+PC (2026-04-27):** фиксированное деление чатов пополам upfront (см. запись «ADR-011 Addendum 2»). PC и Mac работают над **непересекающимися** диапазонами chat_id, разные БД. **Параллельная работа над одним chat_id невозможна по дизайну**, поэтому конкурентность state — теоретическая, не блокер.
+- **Когда проявится:** только если оператор по ошибке запустит Mac и PC над **одним** chat_id (нарушив deterministic split). Это операционная ошибка, не архитектурная.
+- **Варианты решения (если когда-то понадобится):**
   - (а) **Расширить PK до `(chat_id, analyzer_version)`** через миграцию — каждая машина имеет свою стейт-запись. Это аналог решения для `analysis_chat_analysis` (там тоже `(chat_id, analyzer_version)`). Естественное и консистентное решение, но требует миграции БД и пересмотра всех state-функций.
   - (б) **Операционная дисциплина:** не запускать одновременно Mac и PC над одним chat_id. Закрепить в runbook, не исправлять в коде. Просто и быстро, но хрупко (при ошибке оператора — реальный конфликт).
-  - (в) **Advisory lock в Postgres** перед началом работы над chat_id (как `pg_try_advisory_lock(chat_id)`). Если другой процесс уже взял lock — текущий процесс пропускает чат с warning. Требует обвязки в коде, но не миграции.
+  - (в) **Advisory lock в Postgres** перед началом работы над chat_id (как `pg_try_advisory_lock(chat_id)`). Если другой процесс уже взял lock — текущий процесс пропускает чат с warning. Требует обвязки в коде, но не миграции. Применимо только если PC и Mac в одной БД (мы НЕ в этой схеме).
 - **Контекст возникновения:** обнаружено при реализации Addendum 2 коммитом `90da591` (Claude Code на СТОП 1 отметил архитектурный риск, в скоупе хотфикса не реализовывал).
 - **Чат:** Архитектурный штаб (мини-ADR или addendum к ADR-011 при необходимости).
-- **Приоритет:** medium (не блокер, проявится только при ошибочной параллельной работе или при будущем расширении распределения).
+- **Приоритет:** **low** (был medium до 2026-04-27 — при принятой схеме фиксированного деления больше не блокер. Защита-в-глубине для гипотетических ошибок оператора, не архитектурный долг.)
 - **Статус:** open
 
 ---
 
-### [2026-04-26] — Test failures unrelated to DB protection — to be addressed separately
+### [2026-04-27] — Пакет техдолга — pytest failures + pyproject.toml + ix-расхождение autogenerate
 
-После hotfix #3 (двухуровневая защита prod БД, коммит `13b8d42`) полный pytest даёт `337 passed, 5 failed`. БД не пострадала: chats=850, messages=82776 ДО и ПОСЛЕ прогона. Все 5 fail'ов — известные, не связаны с защитой производственной БД. Каждый — отдельная мини-задача.
+- **Суть:** объединение трёх независимых, но мелких задач в один пакетный коммит для эффективной обработки одной Claude Code сессией. Все три — известные, локализованные, не требуют архитектурных решений, только аккуратной реализации.
 
-#### [2026-04-26] — `test_safety_guard_unset_test_url` падает из-за .env
+#### Подзадача 1 — `pyproject.toml` build-backend сломан (HIGH)
 
-- **Суть:** наш собственный safety-тест упал, потому что `pydantic-settings` читает `.env`, где после коммита `eb4f78c` лежит `TEST_DATABASE_URL`. `env.pop("TEST_DATABASE_URL")` в тесте убирает переменную из env subprocess, но pydantic-settings подхватывает её обратно из `.env` → safety guard не срабатывает, subprocess выходит с кодом 0 вместо ожидаемого 2.
-- **Решение:** запускать subprocess либо с флагом, который отключает чтение `.env` (например, `_env_file=None` или переменная окружения, перекрывающая `.env`), либо из временной директории без `.env` файла.
-- **Контекст:** подтверждено локально при прогоне `pytest tests/test_safety_guard.py` после hotfix #3: 4 passed, 1 failed именно этот тест. На функциональность защиты не влияет — два других safety-теста (`test_safety_guard_test_url_equals_prod_url`, `test_safety_guard_test_url_without_test_keyword`) проходят и подтверждают защиту от prod URL и URL без `test`.
-- **Чат:** Prompt Factory for Claude Code (короткая задача на 5–10 минут)
-- **Приоритет:** medium
-- **Статус:** open
-
-#### [2026-04-26] — `test_decide_match_passes_response_format_to_llm` ожидает старое значение
-
-- **Суть:** после хотфикса №2 (откат `response_format` под MLX, коммит `3309fe7`) ассерт `llm.response_formats == [MATCHING_RESPONSE_FORMAT]` стал ложным — теперь там `[None]`, потому что `response_format` отключён ради совместимости с LM Studio MLX backend.
-- **Решение:** обновить ожидание теста: `assert llm.response_formats == [None]`. Параллельно решить, нужен ли отдельный тест на негативный сценарий (когда `response_format` явно не передан) — или удалить тест целиком, если матчинг через response_format больше не используется.
-- **Контекст:** связано с тем, что LM Studio MLX backend на mac не поддерживает `response_format` с JSON Schema, содержащим Decimal pattern (negative-lookahead regex). Альтернатива на будущее — переключить LM Studio runtime на llama.cpp (GBNF grammar поддерживает lookahead), и тогда тест станет снова актуальным с `response_format != None`.
-- **Чат:** Prompt Factory for Claude Code
-- **Приоритет:** low
-- **Статус:** open
-
-#### [2026-04-26] — `test_pydantic_invalid_extra_key` + `test_preflight_classification_rejects_extra_field` после `extra='ignore'`
-
-- **Суть:** после хотфикса №2 в Pydantic-моделях `extra='forbid'` заменён на `extra='ignore'`, поэтому `ValidationError` больше не raises при наличии лишних полей. Оба теста ожидают исключение через `with pytest.raises(ValidationError):` и падают с `Failed: DID NOT RAISE`.
-- **Решение:** два варианта на выбор:
-  - (а) Удалить тесты — поведение `extra='ignore'` теперь корректное по дизайну (LLM-ответы Qwen часто содержат лишние поля, их нужно молча игнорировать).
-  - (б) Инвертировать ожидание — проверять, что лишнее поле просто не попадает в результирующий объект (например, `assert not hasattr(model, 'extra_field')`).
-- **Рекомендация:** вариант (б) — сохраняет регрессионную защиту от случайной обратной правки на `extra='forbid'`, что снова сломает производственный парсинг LLM-ответов.
-- **Контекст:** связано с правилом «LLM-ответы Qwen часто обёрнуты в markdown-fences и содержат произвольные дополнительные поля; парсинг должен быть терпимым».
-- **Чат:** Prompt Factory for Claude Code
-- **Приоритет:** low
-- **Статус:** open
-
-#### [2026-04-26] — `test_profile_lock_serializes_concurrent_apply` — seed/teardown isolation
-
-- **Суть:** тест падает на seed-фазе с `UniqueViolationError: duplicate key value violates unique constraint "uq_orders_customer_telegram_id" Key (telegram_id)=(@svc_lockrace) already exists` — от предыдущих прогонов остаются данные в `pili_crm_test`.
-- **Решение:** либо добавить teardown в фикстуру (явное удаление customer'а с `telegram_id='@svc_lockrace'` перед/после теста), либо использовать уникальные суффиксы (timestamp / uuid) для тестовых customer'ов в `_make_customer`.
-- **Контекст:** изначально при первом наблюдении (до коммита `eb4f78c` с разделением test/prod БД) тест падал как `Customer 52 not found`. После миграций и переноса в test БД ошибка изменилась, но причина — та же область: изоляция теста, повторный запуск падает из-за остатков предыдущего. Тест сам комментирует, что pre-creating profile критично для проверки `FOR UPDATE` lock — но pre-creating customer тоже должен быть в seed-фазе с teardown'ом.
-- **Чат:** Prompt Factory for Claude Code
-- **Приоритет:** low
-- **Статус:** open
-
----
-
-### [2026-04-24] — 🔴 КРИТИЧНО: pyproject.toml build-backend настройка сломана
-
-- **Суть:** в `pyproject.toml` указано `build-backend = "setuptools.backends.legacy:build"` — несуществующая строка. Корректное значение — `setuptools.build_meta`. Из-за этого `pip install -e .` падает в чистом venv, что блокирует:
-  - Setup нового окружения для разработки на новой машине
-  - Любой CI/CD-процесс, который делает чистую установку
-  - Docker-сборку, если она планируется
-  - Любые операции с проектом как с пакетом (`pip wheel`, `pip install` из git)
-- **Как обнаружено:** при реализации ADR-011 Task 3 Claude Code делал sanity check в чистом venv (по требованию архитектурного штаба). Чтобы продолжить sanity check, обошёл проблему через `pip install httpx rapidfuzz pydantic sqlalchemy[asyncio] asyncpg fastapi pydantic-settings` напрямую вместо `pip install -e .`.
-- **Workaround в существующих окружениях:** если у разработчика уже есть рабочий venv с установленными зависимостями — текущая работа не страдает. Проблема только при чистой установке.
-- **Что нужно сделать:**
-  1. Заменить `build-backend = "setuptools.backends.legacy:build"` на `build-backend = "setuptools.build_meta"`
-  2. Проверить `pip install -e .` в чистом venv проходит
-  3. Прогнать pytest в чистом окружении — убедиться, что все 330 тестов проходят
-- **Чат:** Prompt Factory for Claude Code (мини-задача на 5–10 минут работы Claude Code)
+- **Что:** в `pyproject.toml` указано `build-backend = "setuptools.backends.legacy:build"` — несуществующая строка. Корректное значение — `setuptools.build_meta`. `pip install -e .` падает в чистом venv → блокер для нового окружения, CI, Docker-сборки. Текущая разработка не страдает (рабочие venv не пересоздаются).
+- **Решение:** заменить строку на `build-backend = "setuptools.build_meta"`. Проверить `pip install -e .` в чистом venv. Прогнать pytest в чистом окружении.
 - **Приоритет:** **HIGH** (блокер для нового окружения, но не блокирует текущую разработку)
+
+#### Подзадача 2 — `test_safety_guard_unset_test_url` падает из-за .env (medium)
+
+- **Что:** safety-тест падает потому что `pydantic-settings` читает `.env` (где после коммита `eb4f78c` лежит `TEST_DATABASE_URL`). `env.pop("TEST_DATABASE_URL")` в тесте убирает переменную из subprocess env, но pydantic-settings подхватывает её обратно из `.env` → safety guard не срабатывает.
+- **Решение:** запускать subprocess с флагом `_env_file=None` или из временной директории без `.env`.
+
+#### Подзадача 3 — `test_decide_match_passes_response_format_to_llm` ожидает старое значение (low)
+
+- **Что:** после хотфикса MLX (`response_format=None`, коммит `3309fe7`) ассерт `llm.response_formats == [MATCHING_RESPONSE_FORMAT]` стал ложным — теперь там `[None]`.
+- **Решение:** обновить ожидание теста: `assert llm.response_formats == [None]`.
+
+#### Подзадача 4 — `test_pydantic_invalid_extra_key` + `test_preflight_classification_rejects_extra_field` после `extra='ignore'` (low)
+
+- **Что:** после хотфикса MLX `extra='forbid'` заменён на `extra='ignore'`, поэтому `ValidationError` больше не raises. Оба теста ожидают исключение через `with pytest.raises(ValidationError):` и падают с `Failed: DID NOT RAISE`.
+- **Решение:** инвертировать ожидание — проверять, что лишнее поле не попадает в результирующий объект (например, `assert not hasattr(model, 'extra_field')`). Сохраняет регрессионную защиту от случайной обратной правки на `extra='forbid'`.
+
+#### Подзадача 5 — `test_profile_lock_serializes_concurrent_apply` — seed/teardown isolation (low)
+
+- **Что:** тест падает на seed-фазе с `UniqueViolationError: duplicate key value violates unique constraint "uq_orders_customer_telegram_id" Key (telegram_id)=(@svc_lockrace) already exists` — от предыдущих прогонов остаются данные в `pili_crm_test`.
+- **Решение:** добавить teardown в фикстуру (явное удаление customer'а с `telegram_id='@svc_lockrace'`), либо использовать уникальные суффиксы (timestamp / uuid) для тестовых customer'ов в `_make_customer`.
+
+#### Подзадача 6 — `test_default_timeout_is_300_seconds` (low)
+
+- **Что:** один из 6 pre-existing failures, упоминается в handoff. Точная причина не зафиксирована — Claude Code должен прочитать тест и понять.
+- **Решение:** на месте — обновить ожидание timeout если изменилась константа, либо обновить мок если тест устарел.
+
+#### Подзадача 7 — `ix_orders_order_item_status` расхождение в autogenerate (low)
+
+- **Что:** при каждом запуске `alembic revision --autogenerate` обнаруживается расхождение индекса `ix_orders_order_item_status` — в моделях и в миграциях что-то не совпадает. Claude Code вычищает из автогенерации в каждой новой миграции (Пакет 1 ADR-007, Пакет 2 ADR-007+008).
+- **Решение:** ревизия моделей и миграций `orders_order_item`. Либо в модели есть индекс без миграции (добавить миграцию), либо в миграции есть индекс без модели (либо удалить миграцией, либо добавить в модель).
+
+---
+
+- **Чат:** Prompt Factory for Claude Code (один пакетный коммит, ~45-60 минут Sonnet 4.6 + Medium)
+- **Приоритет:** **HIGH** (из-за подзадачи 1) | medium/low для остальных
 - **Статус:** open
+- **Ожидание:** один коммит закрывает все 7 подзадач. После коммита ~6 pre-existing pytest failures исчезнут полностью, новое окружение через `pip install -e .` будет работать, autogenerate перестанет ругаться на индекс.
+
+---
 
 ### [2026-04-24] — ADR-011: policy очистки накопившихся draft-заказов от устаревших версий анализатора
 
@@ -184,12 +180,49 @@
 - **Приоритет:** low (обходится повторным прогоном; не блокирует разработку)
 - **Статус:** open
 
-### [2026-04-24] — ADR-011: identity updates (phone/email/city) из extract — целевое поле не определено
+### [2026-04-24] — ADR-011: identity updates через карантин (вариант X1 принят 2026-04-27)
 
-- **Суть:** ADR-011 §7 упоминает что identity-поля extract должны идти "в соответствующие JSONB-поля профиля", но `OrdersCustomerProfile` не содержит полей phone/email/city. Реальные целевые поля находятся в базовой таблице `OrdersCustomer`: `phone`, `email`, `telegram_username`. Identity-updates требуют отдельной политики: (а) перезаписывать колонки `OrdersCustomer` при заполненных значениях у клиента; (б) только дополнять при отсутствующих; (в) игнорировать и полагаться на ручной ввод оператора.
-- **Контекст:** обнаружено при реализации ADR-011 Task 2. Пропущено в Task 2 (TODO-маркер в `app/analysis/service.py::apply_analysis_to_customer`), требует решения по политике перезаписи перед включением.
-- **Чат:** Архитектурный штаб (addendum к ADR-011)
-- **Приоритет:** medium (без этого часть ценности анализа теряется)
+- **Суть:** ADR-011 §7 упоминает что identity-поля extract должны идти "в соответствующие JSONB-поля профиля", но `OrdersCustomerProfile` не содержит полей phone/email/city. Реальные целевые поля в `OrdersCustomer` (`phone`, `email`, `telegram_username`). При full analysis на 386 чатах LLM найдёт много identity-данных — и **главное правило: их нельзя терять**.
+- **Принятое решение (2026-04-27, вариант X1 — карантинная таблица):**
+  - LLM **никогда** не модифицирует `OrdersCustomer` напрямую. Все извлечённые identity-данные идут в **отдельную таблицу карантина**.
+  - На основе карантина — два пути применения: (1) auto-apply для пустых полей с `confidence='high'`; (2) ручная модерация через Cowork для всего остального.
+  - Структура карантина закладывает гибкость по типам контактов на будущее без изменений основной схемы.
+- **Архитектурный план реализации:**
+  1. **Новая таблица** `analysis_extracted_identity`:
+     ```
+     extracted_id     bigserial PK
+     customer_id      bigint FK NULL          -- может быть NULL для unreviewed-чатов
+     chat_id          bigint FK NOT NULL
+     analyzer_version text NOT NULL
+     extracted_at     timestamptz NOT NULL DEFAULT now()
+     contact_type     text NOT NULL           -- 'phone' | 'email' | 'address' | 'delivery_method' | 'city' | 'telegram_username'
+     value            text NOT NULL
+     confidence       text NOT NULL           -- 'high' | 'medium' | 'low' (от LLM)
+     context_quote    text NULL               -- кусок чата откуда извлечено (опционально)
+     status           text NOT NULL           -- 'pending' | 'applied' | 'rejected' | 'duplicate'
+     applied_action   text NULL               -- 'auto_filled_empty' | 'overwrite' | 'add_as_secondary' | NULL
+     applied_at       timestamptz NULL
+     applied_by       text NULL               -- 'auto' | 'operator:<name>'
+     ```
+     Индексы: `(customer_id, status)`, `(chat_id)`, `(contact_type, status)`.
+  2. **Миграция Alembic** — новая таблица + индексы, без изменений `OrdersCustomer`.
+  3. **Сервис `apply_identity_to_quarantine(customer_id, chat_id, extracted_data)`** в `app/analysis/service.py` — пишет извлечённые identity-данные в карантин с `status='pending'`. Вызывается из `apply_analysis_to_customer` вместо текущего TODO-маркера.
+  4. **Auto-apply policy** — отдельная функция `auto_apply_safe_identity_updates(customer_id)`, которая запускается после записи в карантин:
+     - Для каждой записи `status='pending'` проверяет: соответствующее поле в `OrdersCustomer` пустое (NULL) И `confidence='high'`?
+     - Если да — пишет значение в `OrdersCustomer.<field>`, помечает запись `status='applied'`, `applied_action='auto_filled_empty'`, `applied_by='auto'`.
+     - Если нет — оставляет `status='pending'`, ждёт оператора через Cowork.
+  5. **MCP-tools для Cowork** (отдельная задача):
+     - `list_pending_identity_updates(customer_id)` — список pending записей для клиента.
+     - `apply_identity_update(extracted_id, action)` — `action ∈ {'overwrite', 'add_as_secondary', 'reject'}`. Если `overwrite` — пишет в `OrdersCustomer`, помечает applied. Если `reject` — помечает rejected без изменений. `add_as_secondary` пока не реализован — закладка под будущую таблицу `customer_contacts`.
+- **Закладка на будущее (фаза 2):** действие `add_as_secondary` требует поддержки **нескольких контактов одного типа** на клиента. Когда появятся реальные данные с несколькими адресами/телефонами на клиента, спроектируем отдельную таблицу `customer_contacts` (или массивы в `OrdersCustomer`). До этого момента action `add_as_secondary` возвращает ошибку «not yet implemented» — оператор использует только `overwrite`/`reject`.
+- **Что НЕ меняется:**
+  - `OrdersCustomer` schema — без изменений (миграция только добавляет новую таблицу карантина).
+  - Логика `apply_analysis_to_customer` сохраняет существующее поведение для всех остальных полей (preferences, orders, incidents) — меняется только TODO-маркер на вызов карантина.
+  - Существующие данные в БД — без миграции.
+- **Решить ДО:** запуска full analysis ADR-011 на 386 чатах (`client + possible_client`). Без реализации этой записи extracted identity-данные **будут потеряны** — TODO-маркер в коде их игнорирует.
+- **Связанные ADR / задачи:** ADR-011, ADR-011 Addendum 2 (`make_analyzer_version`), будущая запись о `customer_contacts` (фаза 2 — несколько контактов одного типа на клиента).
+- **Чат:** Prompt Factory for Claude Code (миграция + сервис + auto-apply policy + 4-6 тестов; MCP-tools — отдельной задачей)
+- **Приоритет:** **HIGH** (блокер для следующего этапа — full analysis на 386 чатах)
 - **Статус:** open
 
 ### [2026-04-23] — Дублирование клиентов по telegram_id — политика мержа
@@ -202,12 +235,29 @@
 - **Приоритет:** low (теоретический риск, появится по факту)
 - **Статус:** open
 
-### [2026-04-22] — FastAPI: автоматический запуск при старте системы
+### [2026-04-22] — FastAPI: автоматический запуск при старте macOS (launchd + health, решение принято 2026-04-27)
 
-- **Суть:** организовать автоматический запуск FastAPI при старте macOS и добавить механизм проверки статуса.
-- **Контекст:** FastAPI обязателен для работы Cowork (derive-status) и для lifespan-триггера экспорта зеркала (ADR-005). Ручной запуск через uvicorn каждое утро — неудобно и чревато забывчивостью.
-- **Чат:** Архитектурный штаб
-- **Приоритет:** high
+- **Суть:** FastAPI обязателен для Cowork (derive-status, ADR-005 lifespan-триггер) и должен запускаться автоматически при загрузке Mac. Сейчас оператор запускает вручную каждое утро командой `cd /Users/protey/pili-crm && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000`. Забывчивость, перезагрузки macOS и молчаливые сбои процесса приводят к тому что Cowork работает «как будто», но derive-status не срабатывает.
+- **Принятое решение (2026-04-27, вариант 1 — launchd + health-check):**
+  1. **launchd plist** `~/Library/LaunchAgents/com.pilistrogai.fastapi.plist` (ASCII reverse-DNS, без кириллицы — см. правило в этом же файле про launchd plist для tg-incremental):
+     - `RunAtLoad=true` — запускается при логине пользователя.
+     - `KeepAlive=true` — auto-restart при падении процесса.
+     - `WorkingDirectory=/Users/protey/pili-crm`.
+     - `ProgramArguments` — путь к `python3` + аргументы `-m uvicorn app.main:app --host 0.0.0.0 --port 8000`.
+     - `StandardOutPath=/Users/protey/pili-crm/logs/fastapi-stdout.log`, `StandardErrorPath=/Users/protey/pili-crm/logs/fastapi-stderr.log` (директорию `logs/` создать в репо, добавить в `.gitignore`).
+     - `EnvironmentVariables` — `DATABASE_URL`, и другое из `.env` если необходимо для запуска (или полагаемся на чтение `.env` через pydantic-settings).
+  2. **Health-check эндпойнт** в FastAPI: `GET /health` → `{"status": "ok", "version": "..."}` (5-10 строк кода в `app/main.py` или отдельном модуле). Не требует БД-доступа — просто факт работы FastAPI.
+  3. **Shell-alias** в `~/.zshrc`: `alias crm-status='curl -s http://localhost:8000/health || echo "FastAPI DOWN"'`. Одна команда показывает живёт процесс или нет.
+  4. **Runbook оператора** в `docs/` — как запустить/остановить/перезапустить FastAPI через `launchctl load/unload ~/Library/LaunchAgents/com.pilistrogai.fastapi.plist`, где смотреть логи, что делать если не запускается.
+- **Что нужно сделать:**
+  1. Сгенерировать plist-файл с правильными путями и зависимостями.
+  2. Добавить эндпойнт `GET /health` в `app/main.py` + регрессионный тест.
+  3. Создать директорию `logs/`, добавить в `.gitignore`.
+  4. Написать runbook — `docs/runbook_fastapi_autostart.md`.
+  5. Опционально: shell-alias оператор добавит сам в `.zshrc` (это не часть реализации, упомянуть в runbook).
+- **Связанные задачи:** ADR-005 (lifespan-триггер ежесуточного экспорта зеркала зависит от запущенного FastAPI), запись про автоматический мониторинг статусов (тоже зависит).
+- **Чат:** Prompt Factory for Claude Code (миграция + plist + endpoint + runbook; ~30-45 минут Sonnet 4.6 + Medium)
+- **Приоритет:** **HIGH**
 - **Статус:** open
 
 ### [2026-04-22] — Cowork: автоматический мониторинг статусов заказов и доставки
@@ -306,12 +356,19 @@
 - **Приоритет:** medium (может всплыть быстро на дорогих позициях)
 - **Статус:** open
 
-### [2026-04-22] — ADR-008: расположение calculate_weighted_price
+### [2026-04-22] — ADR-008: расположение `calculate_weighted_price` (решение принято 2026-04-27)
 
-- **Суть:** функция `calculate_weighted_price` (усреднение по количеству) — в `app/pricing/service.py` или в `app/warehouse/services.py`. Рекомендация — pricing (это расчёт цены), но окончательно определяется при реализации.
-- **Контекст:** технический вопрос реализации, не архитектурный. Решается при написании промта в Prompt Factory.
-- **Чат:** Prompt Factory for Claude Code (при реализации Пакета 2b)
-- **Приоритет:** medium (блокирует реализацию)
+- **Суть:** функция `calculate_weighted_price` (усреднение по количеству для разрешения price-конфликтов в `weighted_average` ветке ADR-008) должна быть размещена в правильном модуле перед реализацией Пакета 2b.
+- **Принятое решение (2026-04-27):** функция размещается в **`app/pricing/service.py`**. Обоснование:
+  - Это **расчёт цены** — семантически принадлежит модулю pricing.
+  - В `app/pricing/service.py` уже сосредоточена вся логика расчёта (retail/manufacturer paths, rounding, discounts по ADR-004). Добавление weighted_average туда же сохраняет single source of truth для pricing-формул.
+  - `app/warehouse/services.py` вызывает функцию при создании `warehouse_pending_price_resolution` — это потребитель, не владелец логики.
+- **Что нужно сделать (готово к ТЗ для Prompt Factory):**
+  1. Создать функцию `calculate_weighted_price(prices: list[Decimal], quantities: list[int]) -> Decimal` в `app/pricing/service.py`. Pure-функция, без БД-доступа.
+  2. Покрыть юнит-тестами (3-5 тестов): обычный кейс, одна позиция, нулевая quantity (edge case → ValueError), отрицательные значения (validation).
+  3. Подключить в `app/warehouse/services.py` импортом — без логики снаружи.
+- **Чат:** Prompt Factory for Claude Code (мини-задача, ~15-30 минут Sonnet 4.6 + Medium)
+- **Приоритет:** medium (блокирует реализацию ADR-008 Пакета 2b)
 - **Статус:** open
 
 ### [2026-04-22] — Cowork: правила работы с листингами
@@ -322,13 +379,16 @@
 - **Приоритет:** medium (не блокирует реализацию, но нужно до массового использования)
 - **Статус:** open
 
-### [2026-04-22] — Фактический размер seed MVP
+### [2026-04-22] — Фактический размер seed MVP — точечная правка документации (готово к реализации 2026-04-27)
 
-- **Статус:** in-progress
+- **Статус:** open (готово к реализации)
 - **Факт (подтверждено Claude Code):** 36 клиентов, 128 товаров (catalog_product), 62 заказа, 133 позиции заказов (orders_order_item). «133 товара» в старых документах — неточность, относилась к позициям, не к товарам.
-- **Что нужно:** пройтись по документам, где упоминается «133 товара», заменить на корректные формулировки.
-- **Документы к правке:** системный промт архитектурного чата (в прошлой версии упоминалось 133), `docs/adr/ADR-005-mirror-google-sheets.md` (упоминание seed), `docs/adr/ADR-007-catalog-pricing.md` (упоминание 133 товаров в разделе миграции).
-- **Чат:** Архитектурный штаб (разовая точечная правка)
+- **Что нужно сделать:**
+  1. `grep -rn "133" docs/` — найти все упоминания.
+  2. Для каждого: понять контекст. Если речь про **товары** (catalog_product) — заменить `133` на `128`. Если речь про **позиции** заказов (orders_order_item) — оставить `133` как есть (это и есть число позиций).
+  3. Документы к ревизии: `docs/adr/ADR-005-mirror-google-sheets.md` (упоминание seed), `docs/adr/ADR-007-catalog-pricing.md` (упоминание 133 товаров в разделе миграции), системные промты в `docs/prompt-for-claude-code.md` и `docs/cowork-system-prompt.md` (если упоминается).
+  4. Sanity check: после правок снова `grep -rn "133" docs/` — все оставшиеся упоминания должны относиться к позициям заказа, не к товарам.
+- **Чат:** Prompt Factory for Claude Code (точечная задача, ~10-15 минут Sonnet 4.6 + Medium)
 - **Приоритет:** low (гигиена документации)
 
 ### [2026-04-22] — ADR-007/008: маркер иммутабельности моделей
@@ -337,22 +397,6 @@
 - **Контекст:** долг после Пакета 1 ADR-007 (1 класс в frozenset) вырос после Пакета 2 (2 класса). При реализации Пакета 3 ADR-007 (MCP-tools) — удобный момент закрыть вместе с другими правками тестов.
 - **Чат:** Prompt Factory for Claude Code (включить в промт Пакета 3 отдельной подзадачей «гигиена тестов»)
 - **Приоритет:** medium (не блокирует, но накапливается)
-- **Статус:** open
-
-### [2026-04-22] — Процесс: точки остановки в промтах для Claude Code
-
-- **Суть:** в Пакете 2 Claude Code нарушил точку остановки «СТОП 2» — написал сводку вместо кода и продолжил в auto mode. Нынешняя формулировка «показать полный текст, ждать ОК» интерпретируется свободно.
-- **Контекст:** риск пропустить проблему в коде, который архитектурный чат не увидел. Для будущих промтов надо формулировать строже: «не продолжать работу до получения явного подтверждения словом "ОК" в чате; сводка/названия функций не считаются показом кода».
-- **Чат:** Prompt Factory for Claude Code (включить жёсткую формулировку во все будущие задания с точками остановки)
-- **Приоритет:** medium (процессная правка)
-- **Статус:** open
-
-### [2026-04-22] — `ix_orders_order_item_status` расхождение в autogenerate
-
-- **Суть:** при каждом запуске `alembic revision --autogenerate` обнаруживается расхождение индекса `ix_orders_order_item_status` — в моделях и в миграциях что-то не совпадает. Claude Code вынужден вычищать его из автогенерации в каждой новой миграции (Пакет 1 ADR-007, Пакет 2 ADR-007+008).
-- **Контекст:** либо в модели есть индекс без миграции, либо в миграции есть индекс без модели. Не про текущие пакеты, но фоново засоряет autogenerate. Нужна короткая ревизия моделей/миграций `orders_order_item`.
-- **Чат:** Prompt Factory for Claude Code (короткая задача — сверка моделей и миграций, при необходимости корректирующая миграция)
-- **Приоритет:** low (не блокирует, только неудобство)
 - **Статус:** open
 
 ### [2026-04-22] — ADR-007/008: спящие hooks без callers
