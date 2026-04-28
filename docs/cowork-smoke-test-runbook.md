@@ -12,7 +12,7 @@
 До запуска runbook убедиться:
 
 - [ ] PostgreSQL запущен, миграции применены (ADR-003 + Addendum + ADR-004).
-- [ ] Seed MVP загружен (36 клиентов, 62 заказа, 133 позиции).
+- [ ] Seed MVP загружен (36 клиентов, 128 товаров (catalog_product), 62 заказа, 133 позиции заказов (orders_order_item)).
 - [ ] MCP-сервер `crm-mcp` запущен и отдаёт список из 9 tools.
 - [ ] Cowork подключён к MCP, видит все 9 tools в интерфейсе.
 - [ ] Системный промт `docs/cowork-system-prompt.md` загружен в Cowork.
