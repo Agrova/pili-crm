@@ -261,6 +261,123 @@ async def test_cli_progress_summary_correct(
     assert stored == "vision_qwen3-vl-30b-a3b"
 
 
+async def test_crash_resume_commits_per_batch_size(
+    db_session: AsyncSession,
+) -> None:
+    """Simulate a process crash mid-chat: verify that the first COMMIT_BATCH_SIZE
+    saves are durable and a restart picks up exactly where the crash left off.
+
+    Scenario:
+    - Seed 25 photo messages in one chat.
+    - First run: _vision_extract_image raises RuntimeError on the 12th call
+      (after 10 successful saves have been committed and 1 more flushed but
+      not yet committed). The CLI returns rc=1.
+    - The real session is committed here to simulate what would have been
+      durable before the crash (only the explicit commit(s) count).
+    - Second run (skip_existing=True): processes remaining messages.
+    - Final check: exactly 25 rows in DB, no duplicates.
+    """
+    aid = await _seed_account_id(db_session)
+    chat = await _seed_chat(db_session, aid, tag="crash")
+    msg_ids = [
+        await _seed_photo_message(db_session, chat, tag=f"crash-{i}")
+        for i in range(25)
+    ]
+    await db_session.flush()
+
+    call_count = 0
+    # Tracks commits that _actually_ happened (real session.commit calls).
+    committed_rows: list[int] = []
+
+    async def _fake_extract(
+        msg: PendingMediaMessage, *_a: object, **_kw: object
+    ) -> ExtractionResult:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 12:
+            raise RuntimeError("simulated crash")
+        return ExtractionResult(
+            message_id=msg.message_id,
+            extracted_text="[photo]",
+            extraction_method="vision_test",
+        )
+
+    original_commit = db_session.commit
+
+    async def _tracking_commit() -> None:
+        await original_commit()
+        # Count how many extraction rows exist after this commit.
+        from sqlalchemy import text as sa_text
+        n = (
+            await db_session.execute(
+                sa_text(
+                    "SELECT COUNT(*) FROM communications_telegram_message_media_extraction "
+                    "WHERE message_id = ANY(:ids)"
+                ),
+                {"ids": msg_ids},
+            )
+        ).scalar()
+        committed_rows.append(int(n))
+
+    args_run1 = _make_args(chat_id=chat, dry_run=False, batch_size=100)
+
+    fake_factory = _patch_session_factory(db_session)
+    with (
+        fake_factory,
+        patch.object(cli_mod, "ensure_model_loaded", new=AsyncMock()),
+        patch.object(cli_mod, "extract_image_or_fail", side_effect=_fake_extract),
+        patch.object(db_session, "commit", side_effect=_tracking_commit),
+    ):
+        rc = await cli_mod.main(args_run1)
+
+    # CLI should have aborted (rc=1) when the 12th call crashed.
+    assert rc == 1
+
+    # Exactly COMMIT_BATCH_SIZE rows were committed before the crash.
+    # (10 writes → commit; 11th write started → crash before next commit)
+    from analysis.media_extract.cli import COMMIT_BATCH_SIZE
+    assert committed_rows and committed_rows[-1] == COMMIT_BATCH_SIZE, (
+        f"expected {COMMIT_BATCH_SIZE} durable rows after crash, got {committed_rows}"
+    )
+
+    # ── Second run: restart from the point of durability ─────────────────
+    call_count = 0
+    committed_rows.clear()
+
+    async def _fake_extract_ok(
+        msg: PendingMediaMessage, *_a: object, **_kw: object
+    ) -> ExtractionResult:
+        return ExtractionResult(
+            message_id=msg.message_id,
+            extracted_text="[photo]",
+            extraction_method="vision_test",
+        )
+
+    args_run2 = _make_args(chat_id=chat, dry_run=False, batch_size=100)
+
+    with (
+        fake_factory,
+        patch.object(cli_mod, "ensure_model_loaded", new=AsyncMock()),
+        patch.object(cli_mod, "extract_image_or_fail", side_effect=_fake_extract_ok),
+        patch.object(db_session, "commit", side_effect=_tracking_commit),
+    ):
+        rc2 = await cli_mod.main(args_run2)
+
+    assert rc2 == 0
+
+    from sqlalchemy import text as sa_text2
+    total = (
+        await db_session.execute(
+            sa_text2(
+                "SELECT COUNT(*) FROM communications_telegram_message_media_extraction "
+                "WHERE message_id = ANY(:ids)"
+            ),
+            {"ids": msg_ids},
+        )
+    ).scalar()
+    assert int(total) == 25, f"expected 25 total rows after resume, got {total}"
+
+
 # ── helpers ────────────────────────────────────────────────────────────────
 
 

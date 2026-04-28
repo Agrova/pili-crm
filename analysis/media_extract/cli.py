@@ -54,6 +54,8 @@ logger = logging.getLogger("analysis.media_extract.cli")
 _EXIT_OK = 0
 _EXIT_LM_STUDIO_TIMEOUT = 2
 
+COMMIT_BATCH_SIZE = 10
+
 VALID_CLASSIFICATIONS: frozenset[str] = frozenset({
     "client", "possible_client", "not_client",
     "family", "friend", "service", "unknown", "all",
@@ -289,14 +291,15 @@ async def _process_message(
     model_id: str,
     extractor_version: str,
     stats: _Stats,
-) -> None:
+) -> bool:
+    """Process one message. Returns True if a new row was written to the DB."""
     kind = decide_extractor(msg)
 
     if kind is ExtractorKind.VISION:
         if args.dry_run:
             stats.processed += 1
             stats.by_kind[ExtractorKind.VISION.value] += 1
-            return
+            return False
         result = await extract_image_or_fail(
             msg, TELEGRAM_EXPORTS_ROOT, model_id, args.endpoint
         )
@@ -316,7 +319,7 @@ async def _process_message(
         stats.errors += 1
 
     if args.dry_run:
-        return
+        return False
 
     written = await save_extraction(
         session,
@@ -328,6 +331,7 @@ async def _process_message(
         stats.saved += 1
     else:
         stats.skipped_existing += 1
+    return written
 
 
 def _print_summary(
@@ -470,6 +474,7 @@ async def main(args: argparse.Namespace) -> int:
                 model_id,
             )
 
+        extractions_since_commit = 0
         # Total is unknown — tqdm runs as an open-ended counter.
         with tqdm(unit="msg", desc="media_extract") as bar:
             async for batch in _iter_batches(
@@ -485,7 +490,7 @@ async def main(args: argparse.Namespace) -> int:
                     if _shutdown_requested:
                         break
                     try:
-                        await _process_message(
+                        written = await _process_message(
                             session,
                             msg,
                             args=args,
@@ -508,10 +513,16 @@ async def main(args: argparse.Namespace) -> int:
                             elapsed_seconds=time.monotonic() - started,
                         )
                         return 1
+                    if not args.dry_run and written:
+                        extractions_since_commit += 1
+                        if extractions_since_commit >= COMMIT_BATCH_SIZE:
+                            await session.commit()
+                            extractions_since_commit = 0
                     bar.update(1)
 
-                if not args.dry_run:
+                if not args.dry_run and extractions_since_commit > 0:
                     await session.commit()
+                    extractions_since_commit = 0
 
                 if _shutdown_requested:
                     break
