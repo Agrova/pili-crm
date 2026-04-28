@@ -31,24 +31,52 @@
 
 ## Открытые вопросы
 
-### [2026-04-28] — vision-template-mismatch: парсер требует обоих заголовков, но qwen3-vl часто выдаёт только один
+### [2026-04-28] — Identity quarantine: MCP-tools для ручного apply (для name + overwrite)
 
-- **Суть:** при боевом media_extract на 267 чатах / 6467 messages (2026-04-27 12:09 — 2026-04-28 17:48, длительность 29ч 38мин на qwen3-vl-8b) метод `vision-template-mismatch` сработал **98 раз (1.5%)**. Парсер ожидает в ответе модели **обе секции** — `Описание:` и `Текст на изображении:`. На практике qwen3-vl часто выдаёт только одну из них или вовсе без заголовков, но содержательно отвечает.
-- **Примеры из БД (sample 5 случаев):**
-  - msg 566188, 566189: «Текст на изображении: отсутствует.» — модель ответила в формате только второй секции, без заголовка `Описание:`.
-  - msg 566193: «На изображении — официальное письмо от Главы Республики Тыва...» — описание есть, ни одного заголовка нет.
-  - msg 566216: «Описание: На фотографии — два человека...» — есть только заголовок `Описание:`, отсутствует `Текст на изображении:`.
-  - msg 567339: «Обложка книги "Measure Twice, Cut Once"...» — описание без заголовков.
-- **Текущее поведение (терпимое):** все 98 записей сохранены в `communications_telegram_message_media_extraction` с маркером `[VISION_TEMPLATE_MISMATCH: ...]` и **сырым ответом модели** в `extracted_text`. Данные **не теряются** — они только помечены как нестандартный формат. Это создаёт шум в полнотекстовом поиске (наличие маркера-префикса) и потенциально влияет на качество extraction-фазы full analysis (LLM получит на вход не описание, а описание + строчка-предупреждение).
-- **Что нужно сделать (после боевого full analysis):**
-  1. Прогнать full analysis на 386 чатах с текущим состоянием media_extract.
-  2. Оценить: повлияли ли 98 mismatch-записей на качество identity-extraction и narrative? Если оператор видит шум — починить парсер.
-  3. Возможные варианты починки: (a) ослабить регекс — допускать любую из двух секций; (b) если нет ни одной — считать **весь ответ** описанием (сохранять без маркера); (c) post-processor, который вычищает маркер `[VISION_TEMPLATE_MISMATCH: ...]` из `extracted_text` для downstream-потребителей.
-  4. Если решено чинить: bump `MEDIA_EXTRACTOR_VERSION` до `v1.2+qwen3-vl-8b`, перепрогон **только** на 98 mismatch-записях (`WHERE extraction_method = 'vision-template-mismatch'`), не на всех 6467.
-- **НЕ блокирует:** запуск full analysis на 386 чатах. Identity quarantine ловит данные из текста сообщений и vision-результатов независимо от того, есть ли в vision-результате маркер.
-- **Связанные:** ADR-014 (media extraction pipeline).
-- **Чат:** Prompt Factory for Claude Code (после первого боевого full analysis; Sonnet 4.6 + Medium, ~30-45 минут).
-- **Приоритет:** medium (терпимое состояние, починить после оценки реального влияния на качество)
+- **Суть:** реализация TZ-IdentityQuarantine (commit `c4fa6aa`) включает только сервисный слой — `extract_identity_to_quarantine` (запись в карантин) и `auto_apply_safe_identity_updates` (auto для NULL-колонок + high). **MCP-tools для ручной модерации через Cowork отсутствуют** — оператор пока не может через Cowork увидеть pending-записи и применить их. Это финальное звено для замыкания workflow X1.
+- **Что нужно сделать:**
+  1. **`list_pending_identity_updates(customer_id: int) -> list[dict]`** — read-tool. Возвращает все pending-записи для клиента: `extracted_id, chat_id, analyzer_version, contact_type, value, confidence, context_quote, extracted_at`. Сортировка по `extracted_at DESC` (новые первыми) или `confidence` ('high' → 'medium' → 'low'). Без пагинации на MVP — на одного клиента редко больше 10-20 записей.
+  2. **`apply_identity_update(extracted_id: int, action: Literal['overwrite', 'add_as_secondary', 'reject']) -> dict`** — write-tool.
+     - `overwrite`: пишет `value` в соответствующую колонку `OrdersCustomer` (включая `name` — это критичный кейс, для NOT NULL колонки auto-apply невозможен по архитектуре). После успеха: `status='applied'`, `applied_action='overwrite'`, `applied_by='operator'`, `applied_at=now()`. Если коллизия UNIQUE на email — savepoint и `applied_action=None` + warning. См. open question «Email UNIQUE-конфликт».
+     - `reject`: только обновление `analysis_extracted_identity` — `status='rejected'`, `applied_by='operator'`, `applied_at=now()`. Колонка `OrdersCustomer` не трогается.
+     - `add_as_secondary`: на текущей итерации возвращает ошибку `NotImplementedError` («not yet implemented — будет реализовано вместе с таблицей customer_contacts»).
+  3. **Тесты:** ~6-8 тестов на edge cases (apply на pending запись, apply на уже applied, apply на NULL customer_id (ошибка — нельзя писать без клиента), reject, name overwrite, email collision savepoint, ...).
+  4. **Контракт для Cowork:** документировать в `crm-mcp/IMPROVEMENTS.md` как новые tools — оператор узнает про них через системный промт Cowork.
+- **Когда сделать:** после batch-commit fix и перед smoke full analysis на чате Kristina (6544). Для smoke на Kristina **обязательно нужен `apply_identity_update`** — кейс Kristina содержит ФИО + СДЭК-адрес + телефон, всё критично, и `name_guess` (Саргсян Кристина Степановна) auto-apply невозможен.
+- **Связанные:** TZ-IdentityQuarantine (закрыта 2026-04-28), будущая запись о `customer_contacts` (для `add_as_secondary`).
+- **Чат:** Prompt Factory for Claude Code (миграция-нет + 2 MCP-tools + 6-8 тестов; Sonnet 4.6 + Medium, ~60-90 минут)
+- **Приоритет:** **HIGH** (блокер для smoke full analysis на Kristina; full analysis на 386 чатах без этих tools потеряет identity-данные кейса Kristina и аналогичных)
+- **Статус:** open
+
+### [2026-04-28] — Identity quarantine: email UNIQUE-конфликт без savepoint при будущей активации auto-apply
+
+- **Суть:** функция `auto_apply_safe_identity_updates` (commit `c4fa6aa`, файл `app/analysis/identity_service.py`) при apply записи `contact_type='email'` делает `UPDATE orders_customer SET email=...`. Колонка `email` имеет UNIQUE-constraint `WHERE NOT NULL`. Если LLM извлёк email, который уже занят другим клиентом, INSERT-исключение `IntegrityError` **аборт-нёт всю транзакцию `apply_analysis_to_customer`** — потеряются все остальные операции этого вызова (preferences, orders, identity-записи других типов).
+- **Сейчас не критично:** на текущей итерации `confidence='medium'` фиксированный (LLM не размечает per-field). Условие auto-apply требует `confidence='high'`, поэтому функция ничего не applies — только kept_pending. Email-апдейт **не выполняется** на этой итерации, поэтому коллизия не может произойти.
+- **Когда станет критично:** в будущей итерации, когда LLM-промт расширим на per-field confidence (отдельная задача — расширение `Identity` Pydantic-схемы). С появлением реальных `confidence='high'` записей email-апдейт начнёт выполняться, и UNIQUE-коллизии станут возможны.
+- **Что нужно сделать (когда придёт время):**
+  1. Обернуть UPDATE на `email` в savepoint: `async with session.begin_nested(): ...`. При `IntegrityError` — rollback savepoint, оставить запись `pending` с пометкой `applied_action=None`, добавить `failure_reason` (новая колонка или structured-комментарий), не аборт-ить внешнюю транзакцию.
+  2. Аналогично для `phone` и `telegram_username` — у них нет UNIQUE на этот момент (только `name` уникальность через бизнес-логику), но defense-in-depth.
+  3. Тест: специально сконструированная коллизия двух customer'ов с одинаковым email — auto-apply должен корректно kept_pending, а не упасть.
+- **Контекст возникновения:** Phase 3 реализации TZ-IdentityQuarantine (Claude Code, 2026-04-28). Caveat зафиксирован в docstring `auto_apply_safe_identity_updates`. Коммит `c4fa6aa`.
+- **Связанные:** TZ-IdentityQuarantine (закрыта 2026-04-28), будущая итерация per-field confidence для LLM Identity.
+- **Чат:** Prompt Factory for Claude Code (вместе с per-field confidence итерацией; Sonnet 4.6 + Medium, ~30-45 минут)
+- **Приоритет:** medium (активируется при per-field confidence; до тех пор — спящий риск, защищён через `confidence='medium'` дефолт)
+- **Статус:** open
+
+### [2026-04-28] — Identity quarantine: дубликаты pending-записей при rerun analysis (force=True)
+
+- **Суть:** функция `extract_identity_to_quarantine` (commit `c4fa6aa`) **не имеет UNIQUE-ограничения** на таблицу `analysis_extracted_identity` — это сознательное решение X1 (`(chat_id, contact_type, value, customer_id)` UNIQUE сделал бы повторные прогоны invalid). При повторном `apply_analysis_to_customer` с `force=True` создаются **дубликаты pending-записей** с теми же значениями. Auto-apply gate их kept_pending (целевая колонка уже не NULL после первого прогона), и оператор в Cowork увидит «два одинаковых телефона из одного чата».
+- **Сейчас не блокирует:** rerun с `force=True` редок (ручной operator action при изменении промта). Дубликаты не нарушают invariant'ы БД, не теряют данные, не ломают auto-apply. Это исключительно UX-проблема: оператор должен будет различать дубликаты при ручной модерации.
+- **Документировано:** test 14 в `tests/analysis/test_identity_quarantine.py` (`test_apply_analysis_rerun_creates_duplicate_quarantine_rows`) фиксирует текущее поведение как осознанный MVP-дизайн.
+- **Когда чинить:** триггер — реальный шум в Cowork backlog (запись в `IMPROVEMENTS.md` от Cowork: «слишком много дубликатов pending от одного клиента»). До этого не оптимизируем.
+- **Варианты решения (если когда-то понадобится):**
+  - **(а)** Дедупликация в `extract_identity_to_quarantine`: SELECT `WHERE chat_id=? AND contact_type=? AND value=? AND customer_id IS NOT DISTINCT FROM ?` — если запись уже есть, пропустить INSERT.
+  - **(б)** Очистка старых pending при rerun: перед записью новых — `DELETE FROM analysis_extracted_identity WHERE chat_id=? AND status='pending' AND analyzer_version != ?`. Сохраняет только записи текущей версии.
+  - **(в)** UNIQUE-индекс с условием: `CREATE UNIQUE INDEX ON analysis_extracted_identity (chat_id, contact_type, value, customer_id) WHERE status='pending'`. Обеспечит идемпотентность через БД, но усложнит миграцию для будущего расширения схемы.
+- **Контекст возникновения:** Phase 3 реализации TZ-IdentityQuarantine (Claude Code, 2026-04-28). Bonus-тест 14 в Phase 4 покрывает.
+- **Связанные:** TZ-IdentityQuarantine (закрыта 2026-04-28).
+- **Чат:** Архитектурный штаб (триггер — реальный шум в Cowork; addendum к ADR-011)
+- **Приоритет:** low (UX-шум, не функциональный риск)
 - **Статус:** open
 
 ### [2026-04-27] — Batch-commit гранулярность в `analysis/run.py` и `analysis/media_extract/cli.py` — риск потери работы при сбое
@@ -70,6 +98,26 @@
 - **Приоритет:** **HIGH** (блокер для следующего полного прогона).
 - **Статус:** open
 
+### [2026-04-28] — vision-template-mismatch: парсер требует обоих заголовков, но qwen3-vl часто выдаёт только один
+
+- **Суть:** при боевом media_extract на 267 чатах / 6467 messages (2026-04-27 12:09 — 2026-04-28 17:48, длительность 29ч 38мин на qwen3-vl-8b) метод `vision-template-mismatch` сработал **98 раз (1.5%)**. Парсер ожидает в ответе модели **обе секции** — `Описание:` и `Текст на изображении:`. На практике qwen3-vl часто выдаёт только одну из них или вовсе без заголовков, но содержательно отвечает.
+- **Примеры из БД (sample 5 случаев):**
+  - msg 566188, 566189: «Текст на изображении: отсутствует.» — модель ответила в формате только второй секции, без заголовка `Описание:`.
+  - msg 566193: «На изображении — официальное письмо от Главы Республики Тыва...» — описание есть, ни одного заголовка нет.
+  - msg 566216: «Описание: На фотографии — два человека...» — есть только заголовок `Описание:`, отсутствует `Текст на изображении:`.
+  - msg 567339: «Обложка книги "Measure Twice, Cut Once"...» — описание без заголовков.
+- **Текущее поведение (терпимое):** все 98 записей сохранены в `communications_telegram_message_media_extraction` с маркером `[VISION_TEMPLATE_MISMATCH: ...]` и **сырым ответом модели** в `extracted_text`. Данные **не теряются** — они только помечены как нестандартный формат. Это создаёт шум в полнотекстовом поиске (наличие маркера-префикса) и потенциально влияет на качество extraction-фазы full analysis (LLM получит на вход не описание, а описание + строчка-предупреждение).
+- **Что нужно сделать (после боевого full analysis):**
+  1. Прогнать full analysis на 386 чатах с текущим состоянием media_extract.
+  2. Оценить: повлияли ли 98 mismatch-записей на качество identity-extraction и narrative? Если оператор видит шум — починить парсер.
+  3. Возможные варианты починки: (a) ослабить регекс — допускать любую из двух секций; (b) если нет ни одной — считать **весь ответ** описанием (сохранять без маркера); (c) post-processor, который вычищает маркер `[VISION_TEMPLATE_MISMATCH: ...]` из `extracted_text` для downstream-потребителей.
+  4. Если решено чинить: bump `MEDIA_EXTRACTOR_VERSION` до `v1.2+qwen3-vl-8b`, перепрогон **только** на 98 mismatch-записях (`WHERE extraction_method = 'vision-template-mismatch'`), не на всех 6467.
+- **НЕ блокирует:** запуск full analysis на 386 чатах. Identity quarantine ловит данные из текста сообщений и vision-результатов независимо от того, есть ли в vision-результате маркер.
+- **Связанные:** ADR-014 (media extraction pipeline).
+- **Чат:** Prompt Factory for Claude Code (после первого боевого full analysis; Sonnet 4.6 + Medium, ~30-45 минут).
+- **Приоритет:** medium (терпимое состояние, починить после оценки реального влияния на качество)
+- **Статус:** open
+
 ### [2026-04-26] — ADR-011 Addendum 2 — реализация распределения Mac master + PC worker
 
 - **Суть:** боевой прогон 850 unreviewed-чатов на Mac исключён из-за теплового ограничения (throttling через ~1 час непрерывной нагрузки). Решение: PC (RTX 3060 Ti, 24/7) выполняет тяжёлые LLM-прогоны как worker, Mac остаётся master с боевой БД. Sync результатов pull-моделью раз в сутки. Apply (запись orders, profile updates) — только на Mac под контролем оператора через Cowork.
@@ -81,15 +129,16 @@
   - **Запуск:** `python3 -m analysis.run --chat-id-range 1..193 --worker-tag pc` на PC (24/7 в `nohup`, завершается сам когда диапазон обработан). На Mac — `--chat-id-range 194..386 --worker-tag mac` сессиями по 1-2 часа когда оператор за машиной.
   - **Sync раз в сутки (по команде оператора):** Mac пуллит результаты PC (`analyzer_version LIKE '%@pc'`) с PC БД через ad-hoc подключение когда Mac дома (USB-сеть, локалка, или промежуточная флешка). Записи мерджатся в Mac БД через `INSERT ... ON CONFLICT DO NOTHING` (UNIQUE на `(chat_id, analyzer_version)` гарантирует отсутствие дублей).
   - **«PC добивает остаток»:** когда PC закончил свой диапазон 1..193 → завершился. Если Mac ещё не обработал свой остаток (например, осталось 30 чатов) — оператор передаёт PC список конкретных chat_id из остатка Mac: `python3 -m analysis.run --chat-ids 250,251,255,260,... --worker-tag pc`. PC доделывает.
-  - **Sync identity quarantine:** ОБЕ таблицы (`analysis_chat_analysis` И `analysis_extracted_identity`, см. запись про identity quarantine X1) синхронизируются вместе. Поскольку PC и Mac обрабатывают **непересекающиеся** диапазоны chat_id — записи в `analysis_extracted_identity` тоже не пересекаются (FK на chat_id). PK конфликтов между worker'ами не будет, потому что зоны зон.
+  - **Sync identity quarantine:** ОБЕ таблицы (`analysis_chat_analysis` И `analysis_extracted_identity`) синхронизируются вместе. Поскольку PC и Mac обрабатывают **непересекающиеся** диапазоны chat_id — записи в `analysis_extracted_identity` тоже не пересекаются (FK на chat_id). PK конфликтов между worker'ами не будет, потому что зоны зон.
 - **Прогресс:**
   1. ✅ **CLI-флаги `--worker-tag` и `--no-apply` в `analysis/run.py`** — реализовано коммитом `90da591` (2026-04-26). Mac (default tag=mac) пишет `v1.0+qwen3-14b` без суффикса (обратная совместимость), PC (`--worker-tag pc`) пишет `v1.0+qwen3-14b@pc`. `--no-apply` пропускает фазу apply на PC. +5 регрессионных тестов в `tests/analysis/test_run_unit.py`.
   2. ⏸ **Параметр `--chat-id-range` или `--chat-ids` в `analysis/run.py`** — для разделения работы upfront. **Новый item, нужен до full analysis.** Pre-flight Claude Code должен проверить — возможно параметр уже есть в каком-то виде (`--chat-id` поддерживается, нужен range/list).
   3. ✅ **Развёртывание PC:** Docker Engine в WSL2 + Postgres + миграции + импорт subset БД (chats + messages) с Mac. Runbook: `runbook_pc_deployment.md`. Завершено 2026-04-28.
   4. ⏸ **Sync-скрипт `scripts/sync_pc_analyses.sh`** — Mac тянет с PC записи `analyzer_version LIKE '%@pc'` через `pg_dump`/`psql` с `ON CONFLICT DO NOTHING`. Должен покрывать ОБЕ таблицы: `analysis_chat_analysis` + `analysis_extracted_identity`. Реализуется отдельной задачей через Prompt Factory.
+  5. ✅ **Identity quarantine table + service** — реализовано коммитом `c4fa6aa` (2026-04-28). Таблица `analysis_extracted_identity` присутствует в Mac prod БД (alembic upgrade head 2026-04-28), pытует sync на PC. Сервис не требует изменений со стороны Mac+PC координации.
 - **Следующие шаги:**
-  - Реализация identity quarantine (TZ-IdentityQuarantine, в работе через Prompt Factory 2026-04-28).
-  - Реализация batch-commit fix (после IdentityQuarantine).
+  - Identity quarantine MCP-tools (см. отдельную open question).
+  - Реализация batch-commit fix.
   - Smoke full analysis на чате Kristina (6544).
   - Реализация `--chat-id-range` параметра + sync-скрипта (Prompt Factory).
   - Запуск full analysis с фиксированным делением: PC берёт 1..193, Mac берёт 194..386. Параллельно работают, sync раз в сутки.
@@ -130,55 +179,6 @@
 - **Чат:** Prompt Factory for Claude Code (в рамках техдолга «conftest для изолированных тестов», уже зафиксирован в `01_scope.md`)
 - **Приоритет:** low (обходится повторным прогоном; не блокирует разработку)
 - **Статус:** open
-
-### [2026-04-24] — ADR-011: identity updates через карантин (вариант X1 принят 2026-04-27, в реализации 2026-04-28)
-
-- **Суть:** ADR-011 §7 упоминает что identity-поля extract должны идти "в соответствующие JSONB-поля профиля", но `OrdersCustomerProfile` не содержит полей phone/email/city. Реальные целевые поля в `OrdersCustomer` (`phone`, `email`, `telegram_username`). При full analysis на 386 чатах LLM найдёт много identity-данных — и **главное правило: их нельзя терять**.
-- **Принятое решение (2026-04-27, вариант X1 — карантинная таблица):**
-  - LLM **никогда** не модифицирует `OrdersCustomer` напрямую. Все извлечённые identity-данные идут в **отдельную таблицу карантина**.
-  - На основе карантина — два пути применения: (1) auto-apply для пустых полей с `confidence='high'`; (2) ручная модерация через Cowork для всего остального.
-  - Структура карантина закладывает гибкость по типам контактов на будущее без изменений основной схемы.
-- **Архитектурный план реализации:**
-  1. **Новая таблица** `analysis_extracted_identity`:
-     ```
-     extracted_id     bigserial PK
-     customer_id      bigint FK NULL          -- может быть NULL для unreviewed-чатов
-     chat_id          bigint FK NOT NULL
-     analyzer_version text NOT NULL
-     extracted_at     timestamptz NOT NULL DEFAULT now()
-     contact_type     text NOT NULL           -- 'phone' | 'email' | 'address' | 'delivery_method' | 'city' | 'telegram_username'
-     value            text NOT NULL
-     confidence       text NOT NULL           -- 'high' | 'medium' | 'low' (от LLM)
-     context_quote    text NULL               -- кусок чата откуда извлечено (опционально)
-     status           text NOT NULL           -- 'pending' | 'applied' | 'rejected' | 'duplicate'
-     applied_action   text NULL               -- 'auto_filled_empty' | 'overwrite' | 'add_as_secondary' | NULL
-     applied_at       timestamptz NULL
-     applied_by       text NULL               -- 'auto' | 'operator:<name>'
-     ```
-     Индексы: `(customer_id, status)`, `(chat_id)`, `(contact_type, status)`.
-  2. **Миграция Alembic** — новая таблица + индексы, без изменений `OrdersCustomer`.
-  3. **Сервис `apply_identity_to_quarantine(customer_id, chat_id, extracted_data)`** в `app/analysis/service.py` — пишет извлечённые identity-данные в карантин с `status='pending'`. Вызывается из `apply_analysis_to_customer` вместо текущего TODO-маркера.
-  4. **Auto-apply policy** — отдельная функция `auto_apply_safe_identity_updates(customer_id)`, которая запускается после записи в карантин:
-     - Для каждой записи `status='pending'` проверяет: соответствующее поле в `OrdersCustomer` пустое (NULL) И `confidence='high'`?
-     - Если да — пишет значение в `OrdersCustomer.<field>`, помечает запись `status='applied'`, `applied_action='auto_filled_empty'`, `applied_by='auto'`.
-     - Если нет — оставляет `status='pending'`, ждёт оператора через Cowork.
-  5. **MCP-tools для Cowork** (отдельная задача):
-     - `list_pending_identity_updates(customer_id)` — список pending записей для клиента.
-     - `apply_identity_update(extracted_id, action)` — `action ∈ {'overwrite', 'add_as_secondary', 'reject'}`. Если `overwrite` — пишет в `OrdersCustomer`, помечает applied. Если `reject` — помечает rejected без изменений. `add_as_secondary` пока не реализован — закладка под будущую таблицу `customer_contacts`.
-- **Закладка на будущее (фаза 2):** действие `add_as_secondary` требует поддержки **нескольких контактов одного типа** на клиента. Когда появятся реальные данные с несколькими адресами/телефонами на клиента, спроектируем отдельную таблицу `customer_contacts` (или массивы в `OrdersCustomer`). До этого момента action `add_as_secondary` возвращает ошибку «not yet implemented» — оператор использует только `overwrite`/`reject`.
-- **Что НЕ меняется:**
-  - `OrdersCustomer` schema — без изменений (миграция только добавляет новую таблицу карантина).
-  - Логика `apply_analysis_to_customer` сохраняет существующее поведение для всех остальных полей (preferences, orders, incidents) — меняется только TODO-маркер на вызов карантина.
-  - Существующие данные в БД — без миграции.
-- **Уточнения по итогам Phase 1 pre-flight Claude Code (2026-04-28):**
-  - **Per-field confidence в LLM отсутствует.** В `Identity` Pydantic есть только свободно-текстовое `confidence_notes`. Все записи карантина пишутся с фиксированным `confidence='medium'`. Auto-apply (требует `'high'`) **не активируется** на этой итерации — все записи идут в `pending` для ручной модерации. Расширение LLM-промта на per-field confidence — отдельная итерация после первого smoke.
-  - **`name_guess` от LLM записывается в карантин** как `contact_type='name'`. CHECK-список `contact_type` расширен до 7 значений (`'phone' | 'email' | 'address' | 'delivery_method' | 'city' | 'telegram_username' | 'name'`). Политика для `name`: никогда не auto-apply; всегда `pending`; при ручном apply перезаписывает `OrdersCustomer.name`. Без этого поля кейс Kristina (Саргсян Кристина Степановна) терял бы самое ценное.
-  - **Перенос парсинга `extract.identity` выше early-return** по `customer_id is None` — согласовано. Минимально-инвазивная перестановка в `apply_analysis_to_customer`.
-- **Решить ДО:** запуска full analysis ADR-011 на 386 чатах (`client + possible_client`). Без реализации этой записи extracted identity-данные **будут потеряны** — TODO-маркер в коде их игнорирует.
-- **Связанные ADR / задачи:** ADR-011, ADR-011 Addendum 2 (`make_analyzer_version`), будущая запись о `customer_contacts` (фаза 2 — несколько контактов одного типа на клиента).
-- **Чат:** Prompt Factory for Claude Code (миграция + сервис + auto-apply policy + 4-6 тестов; MCP-tools — отдельной задачей). **В работе с 2026-04-28 (Opus 4.7 + High, 4 STOP-фазы).**
-- **Приоритет:** **HIGH** (блокер для следующего этапа — full analysis на 386 чатах)
-- **Статус:** in-progress
 
 ### [2026-04-23] — Дублирование клиентов по telegram_id — политика мержа
 

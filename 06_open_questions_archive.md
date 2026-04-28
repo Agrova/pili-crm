@@ -15,6 +15,36 @@
 
 ## Закрытые вопросы
 
+### [2026-04-28] — ADR-011: identity updates через карантин (вариант X1) — закрыто реализацией
+
+- **Статус:** closed
+- **Закрыт:** 2026-04-28, коммит `c4fa6aa` (`feat(analysis): identity quarantine table (ADR-011 X1)`).
+- **Решение:** реализовано в полном объёме согласно архитектурному плану X1, принятому 2026-04-27. LLM никогда не модифицирует `OrdersCustomer` напрямую — все извлечённые identity-данные идут в карантинную таблицу `analysis_extracted_identity`. На основе карантина — два пути применения: (1) auto-apply для пустых полей с `confidence='high'`; (2) ручная модерация (MCP-tools — отдельная задача).
+- **Что сделано:**
+  1. **Миграция Alembic `f1de2c9a4b7e`** — новая таблица `analysis_extracted_identity` (15 колонок: 13 ТЗ-овых + `created_at` + `updated_at` от `TimestampMixin`), 3 индекса (`(customer_id, status)`, `(chat_id)`, `(contact_type, status)`), 5 CHECK constraints (`contact_type` 7 значений включая `name`, `confidence` high/medium/low, `status` pending/applied/rejected/duplicate, `applied_action` 3 значения, **`pending_consistency` через тождественность `=` вместо `OR`** — двунаправленный invariant), 2 FK CASCADE (`customer_id` → `orders_customer`, `chat_id` → `communications_telegram_chat`).
+  2. **Модель `AnalysisExtractedIdentity`** в `app/analysis/models.py` с `TimestampMixin`. Docstring различает семантику `extracted_at` (момент LLM-извлечения, формальный atomic-факт от ТЗ) vs `created_at`/`updated_at` (DB-lifecycle).
+  3. **Сервис `app/analysis/identity_service.py` (новый файл)**:
+     - `extract_identity_to_quarantine(session, *, chat_id, customer_id, analyzer_version, identity_data, context_quotes)` — пишет в карантин с `status='pending'`. Принимает `customer_id=None` для unreviewed-чатов. Маппинг `name_guess → name`, `confidence_notes` отбрасывается silently (не структурное поле). Skip пустых строк и whitespace-only.
+     - `auto_apply_safe_identity_updates(session, *, customer_id, extracted_ids=None)` — применяет pending-записи где целевая колонка NULL И `confidence='high'`. Local snapshot колонок обновляется in-place — защита от race двух pending в одну колонку. Возвращает `{auto_applied: N, kept_pending: M}`. `name` исключён из `_AUTO_APPLY_COLUMNS` (NOT NULL колонка не подходит под fill-empty).
+  4. **Интеграция в `apply_analysis_to_customer`** (`app/analysis/service.py`):
+     - Парсинг `extract.identity` перенесён **выше** early-return по `customer_id is None` — карантин записывается даже для unreviewed-чатов с `customer_id=NULL`.
+     - `auto_apply_safe_identity_updates` вызывается только если `customer_id is not None`.
+     - `AnalysisApplicationResult` расширен 3 счётчиками с дефолтами 0 (`identities_quarantined`, `identities_auto_applied`, `identities_kept_pending`) — обратная совместимость со всеми 25 существующими тестами.
+  5. **2 helper-функции в `app/orders/service.py`** (`get_customer_identity_columns`, `set_customer_identity_field`) — для соблюдения module boundary `analysis ↛ orders.models`. Literal-тип `IdentityColumn` защищает от записи в произвольные поля customer'а.
+  6. **14 тестов** в `tests/analysis/test_identity_quarantine.py`: 5 на `extract_identity_to_quarantine`, 6 на `auto_apply_safe_identity_updates`, 2 интеграционных через `apply_analysis_to_customer`, 1 bonus — rerun semantics.
+- **Финальные метрики:**
+  - **pytest:** 499 passed, 0 failed (на момент закрытия — ноль pre-existing failures, все pre-existing были починены коммитом `66fd002` ранее).
+  - **ruff:** All checks passed.
+  - **Smoke alembic:** upgrade → downgrade → upgrade трижды зелёные.
+  - **Prod БД:** миграция применена 2026-04-28, таблица создана, 0 записей. Sanity check после применения: chats=850, messages=82776, customers=37, orders=62, media_extractions=6467 — данные не пострадали.
+- **Уточнения по итогам реализации (известные ограничения, см. отдельные open questions):**
+  - **Email UNIQUE без savepoint** — auto-apply на `email` не обёрнут в `session.begin_nested()`. На текущей итерации не критично (`confidence='medium'` дефолт блокирует auto-apply целиком). При активации per-field confidence — обязательно обернуть. Зафиксировано в docstring `auto_apply_safe_identity_updates`.
+  - **Quarantine duplicates на rerun** — UNIQUE-индекса намеренно нет, повторные прогоны с `force=True` создают дубликаты pending-записей. Документировано test'ом 14. UX-шум при ручной модерации, не функциональный риск.
+  - **Name через ручной apply** — `name` (NOT NULL колонка) auto-apply не подлежит. Покрытие через будущие MCP-tools (отдельная задача — Identity Quarantine MCP-tools, HIGH priority).
+- **Per-field confidence в LLM отсутствует** — `Identity` Pydantic-схема имеет только свободно-текстовое `confidence_notes`. Фиксированный default `confidence='medium'` в карантине. Auto-apply на текущей итерации **не активируется**. Расширение LLM-промта на per-field confidence — отдельная итерация после первого smoke full analysis.
+- **Связано:** ADR-011, будущая запись о `customer_contacts` (для action `add_as_secondary` — нескольких контактов одного типа на клиента).
+- **Контекст возникновения:** запись была создана 2026-04-24 как требование `apply_analysis_to_customer`. Архитектурный план X1 принят 2026-04-27. Реализация через 4-фазное ТЗ TZ-IdentityQuarantine выполнена Claude Code (Opus 4.7 + High) 2026-04-28. ТЗ закрыта успешно — коммит ушёл в `origin/main`.
+
 ### [2026-04-28] — ADR-014 closure note: боевой media_extract на 267 чатах завершён
 
 - **Статус:** closed
