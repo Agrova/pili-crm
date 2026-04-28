@@ -1,7 +1,7 @@
 """ADR-011 Task 3: Qwen3-14B prompts for the analysis pipeline.
 
 All prompts are version-tagged **v1.0** (matches ``ANALYZER_VERSION``
-``v1.0+qwen3-14b`` in ``app.analysis.__init__``). Any wording change
+``analysis-v1.0+qwen3-14b`` in ``app.analysis.__init__``). Any wording change
 here must be accompanied by a bump of ``ANALYZER_VERSION`` so existing
 ``analysis_chat_analysis`` rows are preserved as history.
 
