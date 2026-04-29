@@ -1,5 +1,15 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Telegram user_ids of the shop operator(s). Messages from these users are
+# tagged [операт.] in chunked LLM input; messages from any other user_id
+# (or NULL) are tagged [клиент]. Currently single operator using two
+# Telegram accounts (RU + KZ phone numbers). Add new user_id here when
+# hiring an assistant or connecting a Telegram bot.
+OPERATOR_TELEGRAM_USER_IDS: frozenset[str] = frozenset({
+    "user5748681414",  # primary account (RU number)
+    "user565055562",   # secondary account (KZ number)
+})
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

@@ -1,7 +1,7 @@
 """ADR-011 Task 3: Qwen3-14B prompts for the analysis pipeline.
 
-All prompts are version-tagged **v1.1** (matches ``ANALYZER_VERSION``
-``analysis-v1.1+qwen3-14b`` in ``app.analysis.__init__``). Any wording change
+All prompts are version-tagged **v1.2** (matches ``ANALYZER_VERSION``
+``analysis-v1.2+qwen3-14b`` in ``app.analysis.__init__``). Any wording change
 here must be accompanied by a bump of ``ANALYZER_VERSION`` so existing
 ``analysis_chat_analysis`` rows are preserved as history.
 
@@ -38,7 +38,7 @@ from typing import Any
 
 from app.analysis.schemas import StructuredExtract
 
-PROMPTS_VERSION = "v1.1"
+PROMPTS_VERSION = "v1.2"
 
 
 def render(template: str, **values: Any) -> str:
@@ -57,10 +57,13 @@ def render(template: str, **values: Any) -> str:
 #
 # Messages are fed to CHUNK_SUMMARY_PROMPT formatted as:
 #
-#   [YYYY-MM-DD HH:MM | id=12345 | from_user] text of the message
+#   [YYYY-MM-DD HH:MM | id=12345 | роль] text of the message
 #
-# The ``id=N`` token is essential — downstream prompts rely on it to
-# trace facts back to source messages via ``source_message_ids``.
+# where ``роль`` is ``операт.`` (sender ∈ OPERATOR_TELEGRAM_USER_IDS) or
+# ``клиент`` (everyone else, including NULL from_user_id). The ``id=N``
+# token is essential — downstream prompts rely on it to trace facts back
+# to source messages via ``source_message_ids``. The role tag is used by
+# ``NARRATIVE_PROMPT`` to attribute identity facts to client vs operator.
 
 
 CHUNK_SUMMARY_PROMPT = """\
@@ -140,6 +143,22 @@ markdown, с разделами ниже. Это narrative-описание, а 
 предложениях встречаются вместе адрес доставки + ФИО + телефон — это
 полный набор identity клиента, не воспринимай его как чисто
 логистическую информацию.
+В материале каждое сообщение помечено ролью отправителя в формате
+`[YYYY-MM-DD HH:MM | id=N | роль]`, где роль — `операт.` (владелец
+магазина, продавец) или `клиент` (покупатель). Имя клиента ищи прежде
+всего в сообщениях с тегом `[клиент]`: само-представления («меня зовут
+Иван»), подписи в адресах доставки, имена в банковских реквизитах.
+Сообщения от `[операт.]` — это речь продавца, **не** клиента; ФИО
+оператора в identity клиента не записывай. Если оператор обращается к
+клиенту по имени («Добрый день, Иван», «Кристина, отправил трек») — это
+валидный косвенный сигнал имени клиента, фиксируй такое имя в
+`name_guess`. В свободном поле `confidence_notes` коротко укажи
+источник: «имя из обращения оператора» или «имя из подписи клиента»,
+чтобы оператор при модерации видел уверенность атрибуции. Третьи лица,
+упомянутые клиентом или оператором в тексте сообщений («Ещё Фёдор
+Алексеевич говорит, нужен угольник», «передай Марине привет»), клиентом
+**не являются** — в раздел «# Клиент» их не вноси; при необходимости
+упомяни в «# История взаимодействия» как «упоминается третье лицо».
 Как долго клиент в переписке, как с вами связан.
 
 # История взаимодействия

@@ -201,5 +201,97 @@ def test_format_messages_for_prompt_includes_id_token() -> None:
         ),
     ]
     rendered = format_messages_for_prompt(msgs)
-    assert "[2025-03-15 14:30 | id=42 | user_a] привет" in rendered
-    assert "[2025-03-15 14:31 | id=43 | unknown] и тебе" in rendered
+    assert "[2025-03-15 14:30 | id=42 | клиент] привет" in rendered
+    assert "[2025-03-15 14:31 | id=43 | клиент] и тебе" in rendered
+    # Точная подстрока с закрывающей скобкой — гарантия, что role tag
+    # не разъехался в формате (например, лишний пробел или другой суффикс).
+    assert "| клиент]" in rendered
+
+
+def test_chunking_tags_operator_messages_ru_account() -> None:
+    """from_user_id == primary RU operator → tagged [операт.]."""
+    msgs = [
+        ChatMessage(
+            telegram_message_id="100",
+            sent_at=datetime(2025, 3, 15, 12, 0, tzinfo=UTC),
+            from_user_id="user5748681414",
+            text="отправил трек",
+        )
+    ]
+    rendered = format_messages_for_prompt(msgs)
+    assert "[2025-03-15 12:00 | id=100 | операт.] отправил трек" in rendered
+
+
+def test_chunking_tags_operator_messages_kz_account() -> None:
+    """from_user_id == secondary KZ operator → tagged [операт.]."""
+    msgs = [
+        ChatMessage(
+            telegram_message_id="101",
+            sent_at=datetime(2025, 3, 15, 12, 1, tzinfo=UTC),
+            from_user_id="user565055562",
+            text="есть в наличии",
+        )
+    ]
+    rendered = format_messages_for_prompt(msgs)
+    assert "[2025-03-15 12:01 | id=101 | операт.] есть в наличии" in rendered
+
+
+def test_chunking_tags_client_messages() -> None:
+    """from_user_id != any operator → tagged [клиент]."""
+    msgs = [
+        ChatMessage(
+            telegram_message_id="200",
+            sent_at=datetime(2025, 3, 15, 12, 5, tzinfo=UTC),
+            from_user_id="user326226592",
+            text="нужен рубанок",
+        )
+    ]
+    rendered = format_messages_for_prompt(msgs)
+    assert "[2025-03-15 12:05 | id=200 | клиент] нужен рубанок" in rendered
+
+
+def test_chunking_handles_null_from_user_id() -> None:
+    """from_user_id is None → fallback to [клиент] (defensive default)."""
+    msgs = [
+        ChatMessage(
+            telegram_message_id="300",
+            sent_at=datetime(2025, 3, 15, 12, 10, tzinfo=UTC),
+            from_user_id=None,
+            text="старое сообщение без user_id",
+        )
+    ]
+    rendered = format_messages_for_prompt(msgs)
+    assert (
+        "[2025-03-15 12:10 | id=300 | клиент] старое сообщение без user_id"
+        in rendered
+    )
+
+
+def test_chunking_handles_mixed_messages() -> None:
+    """Список оператор-RU + оператор-KZ + клиент тегируется корректно построчно."""
+    base = datetime(2025, 3, 15, 12, 0, tzinfo=UTC)
+    msgs = [
+        ChatMessage(
+            telegram_message_id="1",
+            sent_at=base,
+            from_user_id="user5748681414",
+            text="оп RU",
+        ),
+        ChatMessage(
+            telegram_message_id="2",
+            sent_at=base + timedelta(minutes=1),
+            from_user_id="user565055562",
+            text="оп KZ",
+        ),
+        ChatMessage(
+            telegram_message_id="3",
+            sent_at=base + timedelta(minutes=2),
+            from_user_id="user326226592",
+            text="клиент",
+        ),
+    ]
+    lines = format_messages_for_prompt(msgs).splitlines()
+    assert len(lines) == 3
+    assert "| операт.] оп RU" in lines[0]
+    assert "| операт.] оп KZ" in lines[1]
+    assert "| клиент] клиент" in lines[2]

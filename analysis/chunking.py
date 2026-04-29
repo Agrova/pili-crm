@@ -7,9 +7,12 @@ into fixed-size chunks. Default chunk size is **300** (ADR-011 §4),
 configurable via ``--chunk-size`` on ``analysis/run.py``.
 
 The formatter ``format_messages_for_prompt`` produces lines of the
-shape ``[YYYY-MM-DD HH:MM | id=12345 | from_user] text`` — the
-``id=N`` token is essential, downstream prompts (``CHUNK_SUMMARY_PROMPT``
-and onward) trace facts back through it.
+shape ``[YYYY-MM-DD HH:MM | id=12345 | роль] text`` where ``роль`` is
+``операт.`` (sender ∈ ``OPERATOR_TELEGRAM_USER_IDS``) or ``клиент``
+(everyone else, including ``NULL`` ``from_user_id``). The ``id=N``
+token is essential — downstream prompts (``CHUNK_SUMMARY_PROMPT`` and
+onward) trace facts back through it; the role tag is used by
+``NARRATIVE_PROMPT`` to attribute identity facts to the right party.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.communications.models import CommunicationsTelegramMessage
+from app.config import OPERATOR_TELEGRAM_USER_IDS
 
 DEFAULT_CHUNK_SIZE = 300
 
@@ -86,13 +90,21 @@ def split_into_chunks(
 def format_messages_for_prompt(messages: list[ChatMessage]) -> str:
     """Render a chunk as the prompt-friendly multi-line block.
 
-    Convention: ``[YYYY-MM-DD HH:MM | id=12345 | from_user] text``.
+    Convention: ``[YYYY-MM-DD HH:MM | id=12345 | роль] text`` where
+    ``роль`` is ``операт.`` if ``from_user_id`` ∈
+    ``OPERATOR_TELEGRAM_USER_IDS`` and ``клиент`` otherwise (including
+    ``from_user_id is None`` — defensive default: unknown sender is
+    safer marked as client than as operator).
     """
     lines = []
     for m in messages:
         ts = m.sent_at.strftime("%Y-%m-%d %H:%M")
-        from_user = m.from_user_id or "unknown"
-        lines.append(f"[{ts} | id={m.telegram_message_id} | {from_user}] {m.text}")
+        role_tag = (
+            "операт."
+            if m.from_user_id in OPERATOR_TELEGRAM_USER_IDS
+            else "клиент"
+        )
+        lines.append(f"[{ts} | id={m.telegram_message_id} | {role_tag}] {m.text}")
     return "\n".join(lines)
 
 
