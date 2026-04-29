@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-ANALYZER_VERSION_BASE: str = "analysis-v1.0+qwen3-14b"
+ANALYZER_VERSION_BASE: str = "analysis-v1.1+qwen3-14b"
 
 # Backward-compatible alias. Existing `from app.analysis import ANALYZER_VERSION`
 # imports resolve to the base (== mac default, no suffix).
@@ -32,7 +32,7 @@ def make_analyzer_version(worker_tag: str = "mac") -> str:
 
     Backward compatibility: worker_tag='mac' (default) returns just BASE
     without suffix, matching pre-addendum-2 records in the DB.
-    Other tags get '@<tag>' appended: 'pc' → 'analysis-v1.0+qwen3-14b@pc'.
+    Other tags get '@<tag>' appended: 'pc' → 'analysis-v1.1+qwen3-14b@pc'.
     """
     if not _WORKER_TAG_RE.match(worker_tag):
         raise ValueError(f"Invalid worker_tag: {worker_tag!r}")

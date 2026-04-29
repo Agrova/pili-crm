@@ -188,6 +188,100 @@ async def test_quarantine_writes_all_identity_fields(
     assert all(r[3] == "medium" for r in rows)
 
 
+async def test_quarantine_writes_address_and_delivery_method(
+    db_session: AsyncSession,
+) -> None:
+    """Identity with address+delivery_method results in 4 quarantine
+    records covering name/phone/address/delivery_method (Kristina case
+    from chat 6544 — ADR-011 X1 iter 2).
+    """
+    chat_id = await _seed_chat(db_session, "addr_delivery")
+    customer_id = await _make_customer(db_session, "addr_delivery")
+
+    ids = await extract_identity_to_quarantine(
+        db_session,
+        chat_id=chat_id,
+        customer_id=customer_id,
+        analyzer_version="v0.idq+addr",
+        identity_data={
+            "name_guess": "Саргсян Кристина Степановна",
+            "phone": "+79039612273",
+            "address": "проезд Невельского, д.6, к.3",
+            "delivery_method": "СДЭК",
+        },
+    )
+    assert len(ids) == 4
+
+    rows = (
+        await db_session.execute(
+            text(
+                "SELECT contact_type, value "
+                "FROM analysis_extracted_identity "
+                "WHERE extracted_id = ANY(:ids) ORDER BY contact_type"
+            ),
+            {"ids": ids},
+        )
+    ).all()
+    by_type = {r[0]: r[1] for r in rows}
+    assert set(by_type) == {"name", "phone", "address", "delivery_method"}
+    assert by_type["address"] == "проезд Невельского, д.6, к.3"
+    assert by_type["delivery_method"] == "СДЭК"
+    assert by_type["name"] == "Саргсян Кристина Степановна"
+    assert by_type["phone"] == "+79039612273"
+
+
+async def test_quarantine_writes_address_only(
+    db_session: AsyncSession,
+) -> None:
+    chat_id = await _seed_chat(db_session, "addr_only")
+    customer_id = await _make_customer(db_session, "addr_only")
+
+    ids = await extract_identity_to_quarantine(
+        db_session,
+        chat_id=chat_id,
+        customer_id=customer_id,
+        analyzer_version="v0.idq+addronly",
+        identity_data={"address": "ул. Тверская, д. 1, кв. 10"},
+    )
+    assert len(ids) == 1
+    contact_type = (
+        await db_session.execute(
+            text(
+                "SELECT contact_type FROM analysis_extracted_identity "
+                "WHERE extracted_id = :id"
+            ),
+            {"id": ids[0]},
+        )
+    ).scalar_one()
+    assert contact_type == "address"
+
+
+async def test_quarantine_writes_delivery_method_only(
+    db_session: AsyncSession,
+) -> None:
+    chat_id = await _seed_chat(db_session, "deliv_only")
+    customer_id = await _make_customer(db_session, "deliv_only")
+
+    ids = await extract_identity_to_quarantine(
+        db_session,
+        chat_id=chat_id,
+        customer_id=customer_id,
+        analyzer_version="v0.idq+delivonly",
+        identity_data={"delivery_method": "СДЭК"},
+    )
+    assert len(ids) == 1
+    contact_type = (
+        await db_session.execute(
+            text(
+                "SELECT contact_type FROM analysis_extracted_identity "
+                "WHERE extracted_id = :id"
+            ),
+            {"id": ids[0]},
+        )
+    ).scalar_one()
+    assert contact_type == "delivery_method"
+
+
 async def test_quarantine_skips_empty_values(
     db_session: AsyncSession,
 ) -> None:

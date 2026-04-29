@@ -1,7 +1,7 @@
 """ADR-011 Task 3: Qwen3-14B prompts for the analysis pipeline.
 
-All prompts are version-tagged **v1.0** (matches ``ANALYZER_VERSION``
-``analysis-v1.0+qwen3-14b`` in ``app.analysis.__init__``). Any wording change
+All prompts are version-tagged **v1.1** (matches ``ANALYZER_VERSION``
+``analysis-v1.1+qwen3-14b`` in ``app.analysis.__init__``). Any wording change
 here must be accompanied by a bump of ``ANALYZER_VERSION`` so existing
 ``analysis_chat_analysis`` rows are preserved as history.
 
@@ -38,7 +38,7 @@ from typing import Any
 
 from app.analysis.schemas import StructuredExtract
 
-PROMPTS_VERSION = "v1.0"
+PROMPTS_VERSION = "v1.1"
 
 
 def render(template: str, **values: Any) -> str:
@@ -127,6 +127,19 @@ markdown, с разделами ниже. Это narrative-описание, а 
 
 # Клиент
 Кто этот клиент: имя, упоминаемый никнейм, телефон, контактные данные.
+В нашем магазине заказчик и получатель — обычно один и тот же человек.
+ФИО, фамилия, отчество и телефон, появляющиеся в строках адресов
+доставки (СДЭК, Яндекс.Доставка, Почта России, курьерская служба) или в
+реквизитах оплаты (карта, банковский счёт), в подавляющем большинстве
+случаев и есть identity клиента, даже если в начале переписки он
+представлялся только никнеймом или вовсе не представлялся. Извлекай эти
+данные в раздел «# Клиент» наравне с явным представлением: указывай ФИО
+получателя как имя клиента, телефон получателя как телефон клиента,
+адрес доставки и способ доставки (СДЭК / Яндекс / Почта / курьер /
+самовывоз) — всё это валидные источники identity. Если в одном-двух
+предложениях встречаются вместе адрес доставки + ФИО + телефон — это
+полный набор identity клиента, не воспринимай его как чисто
+логистическую информацию.
 Как долго клиент в переписке, как с вами связан.
 
 # История взаимодействия
@@ -186,6 +199,8 @@ STRUCTURED_EXTRACT_EXAMPLE: dict[str, Any] = {
         "phone": "+79161234567",
         "email": None,
         "city": "Москва",
+        "address": "ул. Тверская, д. 1, кв. 10",
+        "delivery_method": "СДЭК",
         "confidence_notes": "Имя в первом сообщении, телефон при оформлении отправки",
     },
     "preferences": [
@@ -251,6 +266,11 @@ STRUCTURED_EXTRACT_PROMPT = """\
 - Допустимые значения `status_delivery`: ordered, shipped, delivered,
   returned, unknown.
 - Допустимые значения `status_payment`: unpaid, partial, paid, unknown.
+- Поля `identity.address` и `identity.delivery_method` извлекай из
+  строк адресов доставки (СДЭК / Яндекс.Доставка / Почта России /
+  курьер). Если в той же строке адреса упоминаются ФИО или телефон —
+  это identity клиента: заполняй также `identity.name_guess` и
+  `identity.phone` соответствующими значениями.
 
 Пример правильного ответа (с вымышленными данными, формат обязателен):
 

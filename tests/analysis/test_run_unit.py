@@ -184,16 +184,16 @@ async def test_build_extract_recovers_on_retry() -> None:
 
 def test_make_analyzer_version_default_mac_no_suffix() -> None:
     """Backward compat: worker_tag='mac' (default) → no suffix."""
-    assert make_analyzer_version("mac") == "analysis-v1.0+qwen3-14b"
-    assert make_analyzer_version() == "analysis-v1.0+qwen3-14b"
+    assert make_analyzer_version("mac") == "analysis-v1.1+qwen3-14b"
+    assert make_analyzer_version() == "analysis-v1.1+qwen3-14b"
     assert make_analyzer_version("mac") == ANALYZER_VERSION_BASE
     assert make_analyzer_version("mac") == ANALYZER_VERSION
 
 
 def test_make_analyzer_version_pc_with_suffix() -> None:
     """Non-mac tag gets @<tag> suffix."""
-    assert make_analyzer_version("pc") == "analysis-v1.0+qwen3-14b@pc"
-    assert make_analyzer_version("worker-1") == "analysis-v1.0+qwen3-14b@worker-1"
+    assert make_analyzer_version("pc") == "analysis-v1.1+qwen3-14b@pc"
+    assert make_analyzer_version("worker-1") == "analysis-v1.1+qwen3-14b@worker-1"
 
 
 def test_make_analyzer_version_invalid_tag_raises() -> None:

@@ -30,6 +30,8 @@ class Identity(BaseModel):
     phone: str | None = None
     email: str | None = None
     city: str | None = None
+    address: str | None = None
+    delivery_method: str | None = None
     confidence_notes: str | None = None
 
 
