@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-ANALYZER_VERSION_BASE: str = "analysis-v1.3+qwen3-14b"
+ANALYZER_VERSION_BASE: str = "analysis-v1.4+qwen3-14b"
 
 # Backward-compatible alias. Existing `from app.analysis import ANALYZER_VERSION`
 # imports resolve to the base (== mac default, no suffix).

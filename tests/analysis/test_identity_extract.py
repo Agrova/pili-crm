@@ -220,3 +220,71 @@ async def test_extract_identity_skips_when_filter_empties_chunks() -> None:
     assert identity.confidence_notes is not None
     assert "WARNING" in identity.confidence_notes
     assert llm.prompts == []
+
+
+# ── operator-name blocklist (v1.4) ──────────────────────────────────────────
+
+
+async def test_blocklist_rejects_operator_first_name(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """LLM emits name_guess='Рома' (client addressed operator) → rejected."""
+    chunks = [[_msg("1", _CLIENT_ID, "Рома, привет! Рубанок привезли?")]]
+    llm = _FakeLLM(responses=[
+        '{"name_guess": "Рома", "telegram_username": null, '
+        '"phone": null, "email": null, "city": null, "address": null, '
+        '"delivery_method": null, '
+        '"confidence_notes": "имя из обращения оператора"}'
+    ])
+
+    with caplog.at_level(logging.WARNING, logger="analysis.identity_extract"):
+        result = await extract_identity_from_chunks(chunks, llm)  # type: ignore[arg-type]
+
+    assert result.name_guess is None
+    assert result.confidence_notes is not None
+    assert "REJECTED operator name" in result.confidence_notes
+    assert "'Рома'" in result.confidence_notes
+    assert any(
+        "matches operator name variant" in rec.message
+        for rec in caplog.records
+        if rec.levelno >= logging.WARNING
+    )
+
+
+async def test_blocklist_rejects_compound_name_with_operator_token() -> None:
+    """Compound name_guess with operator token → fully rejected (no partial save)."""
+    chunks = [[_msg("1", _CLIENT_ID, "Рома Татарков здесь")]]
+    llm = _FakeLLM(responses=[
+        '{"name_guess": "Рома Татарков", "telegram_username": null, '
+        '"phone": null, "email": null, "city": null, "address": null, '
+        '"delivery_method": null, "confidence_notes": null}'
+    ])
+
+    result = await extract_identity_from_chunks(chunks, llm)  # type: ignore[arg-type]
+
+    assert result.name_guess is None
+    assert result.confidence_notes is not None
+    assert "REJECTED operator name" in result.confidence_notes
+    assert "'Рома Татарков'" in result.confidence_notes
+
+
+async def test_blocklist_preserves_legitimate_client_name(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Legitimate client name_guess → untouched by blocklist."""
+    chunks = [[_msg("1", _CLIENT_ID, "Меня зовут Иван Петров, заказчик")]]
+    llm = _FakeLLM(responses=[
+        '{"name_guess": "Иван Петров", "telegram_username": null, '
+        '"phone": null, "email": null, "city": null, "address": null, '
+        '"delivery_method": null, "confidence_notes": "само-представление"}'
+    ])
+
+    with caplog.at_level(logging.WARNING, logger="analysis.identity_extract"):
+        result = await extract_identity_from_chunks(chunks, llm)  # type: ignore[arg-type]
+
+    assert result.name_guess == "Иван Петров"
+    assert "REJECTED" not in (result.confidence_notes or "")
+    assert not any(
+        "matches operator name variant" in rec.message
+        for rec in caplog.records
+    )

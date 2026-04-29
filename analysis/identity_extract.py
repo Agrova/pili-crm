@@ -25,12 +25,13 @@ orchestrator continues on to ``apply_analysis_to_customer``.
 from __future__ import annotations
 
 import logging
+import re
 
 from analysis.chunking import ChatMessage, format_messages_for_prompt
 from analysis.llm_client import LMStudioClient
 from analysis.prompts import IDENTITY_EXTRACT_PROMPT, render
 from app.analysis.schemas import Identity
-from app.config import OPERATOR_TELEGRAM_USER_IDS
+from app.config import OPERATOR_NAME_VARIANTS, OPERATOR_TELEGRAM_USER_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,18 @@ logger = logging.getLogger(__name__)
 # («Добрый день, Анна», «Кристина, отправил трек») do carry name signals
 # via addressings — those must be kept.
 OPERATOR_MAX_LEN_CHARS = 200
+
+
+def _is_operator_name(name: str | None) -> bool:
+    """Return True if any token in `name` matches OPERATOR_NAME_VARIANTS.
+
+    Tokenization: split by non-word chars (preserving hyphens), lowercase.
+    None or empty input returns False (defensive guard).
+    """
+    if name is None:
+        return False
+    tokens = re.findall(r"[\w-]+", name.lower(), flags=re.UNICODE)
+    return any(token in OPERATOR_NAME_VARIANTS for token in tokens)
 
 
 def _strip_json_fence(raw: str) -> str:
@@ -102,7 +115,7 @@ async def extract_identity_from_chunks(
 
     try:
         raw = await llm.complete(prompt)
-        return Identity.model_validate_json(_strip_json_fence(raw))
+        identity = Identity.model_validate_json(_strip_json_fence(raw))
     except Exception as exc:  # noqa: BLE001
         logger.exception(
             "identity extraction failed (%d/%d messages): %s",
@@ -111,12 +124,25 @@ async def extract_identity_from_chunks(
             type(exc).__name__,
         )
         short = str(exc).splitlines()[0][:200] if str(exc) else ""
-        return Identity(
+        identity = Identity(
             confidence_notes=(
                 f"WARNING: identity extraction failed: "
                 f"{type(exc).__name__}: {short}"
             )
         )
+
+    # Operator-name blocklist (v1.4 final sanity check)
+    if _is_operator_name(identity.name_guess):
+        logger.warning(
+            "identity_extract: name_guess=%r rejected (matches operator name variant)",
+            identity.name_guess,
+        )
+        original_name = identity.name_guess
+        identity.name_guess = None
+        note = f" [REJECTED operator name: {original_name!r}]"
+        identity.confidence_notes = (identity.confidence_notes or "") + note
+
+    return identity
 
 
 __all__ = [

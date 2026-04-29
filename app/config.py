@@ -10,6 +10,33 @@ OPERATOR_TELEGRAM_USER_IDS: frozenset[str] = frozenset({
     "user565055562",   # secondary account (KZ number)
 })
 
+# Operator name variants used to reject wrong-attribution name_guess from
+# IDENTITY_EXTRACT. When client addresses operator by name ('Рома, привет'),
+# LLM may emit name_guess='Рома' as if it were the client's name. The
+# blocklist below catches such cases — any token in name_guess that matches
+# OPERATOR_NAME_VARIANTS results in full rejection of name_guess.
+#
+# Trade-off: this also rejects rare real customers actually named 'Рома'.
+# Such names must be entered manually via direct OrdersCustomer.name update,
+# bypassing automatic identity quarantine. Accepted.
+OPERATOR_NAME_VARIANTS: frozenset[str] = frozenset({
+    # Russian short forms
+    "рома",
+    "ромка",
+    "ромочка",
+    "ромчик",
+    # Russian full forms
+    "роман",
+    # Latin forms
+    "roma",
+    "roman",
+    # Russian surname
+    "агеев",
+    # Latin surname (two transliteration variants)
+    "ageev",
+    "ageyev",
+})
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

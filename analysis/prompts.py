@@ -1,7 +1,7 @@
 """ADR-011 Task 3: Qwen3-14B prompts for the analysis pipeline.
 
-All prompts are version-tagged **v1.3** (matches ``ANALYZER_VERSION``
-``analysis-v1.3+qwen3-14b`` in ``app.analysis.__init__``). Any wording change
+All prompts are version-tagged **v1.4** (matches ``ANALYZER_VERSION``
+``analysis-v1.4+qwen3-14b`` in ``app.analysis.__init__``). Any wording change
 here must be accompanied by a bump of ``ANALYZER_VERSION`` so existing
 ``analysis_chat_analysis`` rows are preserved as history.
 
@@ -44,7 +44,7 @@ from typing import Any
 
 from app.analysis.schemas import StructuredExtract
 
-PROMPTS_VERSION = "v1.3"
+PROMPTS_VERSION = "v1.4"
 
 
 def render(template: str, **values: Any) -> str:
@@ -307,7 +307,7 @@ JSON:
 """.replace("{schema_json}", _STRUCTURED_EXTRACT_SCHEMA_JSON)
 
 
-# ── IDENTITY_EXTRACT_PROMPT (v1.3 architecture) ─────────────────────────────
+# ── IDENTITY_EXTRACT_PROMPT (v1.4 architecture) ─────────────────────────────
 #
 # Direct extraction of ``Identity`` from raw chunked messages with role
 # tags, called once per chat (not per chunk) — see
@@ -349,6 +349,13 @@ IDENTITY_EXTRACT_PROMPT = """\
    «Кристина, отправил трек») — это валидный косвенный сигнал:
    записывай это имя в `name_guess`, в `confidence_notes` укажи
    «имя из обращения оператора».
+4а. Обратное направление — клиент обращается к оператору по имени
+    («Рома, привет», «Роман, ну как иначе?») — НЕ является сигналом
+    имени клиента. Если в сообщении с тегом `[клиент]` имя стоит в
+    начале как обращение к собеседнику (с запятой/восклицательным знаком
+    после: «Имя, текст»), и это имя относится к оператору — игнорируй
+    это имя для `name_guess`. Само-представление клиента («меня зовут
+    Иван», «Иван здесь, с заказом») продолжай извлекать по правилу 5.
 5. Само-представление клиента («меня зовут Анна», «это Иван») —
    записывай в `name_guess`, в `confidence_notes` укажи
    «само-представление клиента».
