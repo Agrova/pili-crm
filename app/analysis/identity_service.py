@@ -20,7 +20,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import sqlalchemy as sa
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis.models import AnalysisExtractedIdentity
@@ -91,10 +93,17 @@ async def extract_identity_to_quarantine(
     ``context_quotes`` keys are **contact_type** values
     (``name`` / ``phone`` / ...), not LLM keys.
 
-    Returns the list of created ``extracted_id`` values.
+    Dedup (ADR-011 X1 iter 4): a partial UNIQUE index
+    ``uq_extracted_identity_pending`` covers
+    ``(chat_id, contact_type, value) WHERE status='pending'``. Re-runs
+    that re-extract the same identity therefore do **not** spawn
+    duplicate pending rows; ``ON CONFLICT DO NOTHING`` lets the second
+    run pass cleanly. The returned list contains only the
+    **newly-inserted** ``extracted_id`` values — it can be shorter than
+    the input ``identity_data``. Callers must not assume one-to-one.
     """
     quotes = context_quotes or {}
-    extracted_ids: list[int] = []
+    rows: list[dict[str, object]] = []
 
     for llm_key, raw_value in identity_data.items():
         contact_type = _LLM_KEY_TO_CONTACT_TYPE.get(llm_key)
@@ -105,21 +114,32 @@ async def extract_identity_to_quarantine(
         value = str(raw_value).strip()
         if not value:
             continue
-
-        row = AnalysisExtractedIdentity(
-            customer_id=customer_id,
-            chat_id=chat_id,
-            analyzer_version=analyzer_version,
-            contact_type=contact_type,
-            value=value,
-            confidence=_DEFAULT_CONFIDENCE,
-            context_quote=quotes.get(contact_type),
+        rows.append({
+            "customer_id": customer_id,
+            "chat_id": chat_id,
+            "analyzer_version": analyzer_version,
+            "contact_type": contact_type,
+            "value": value,
+            "confidence": _DEFAULT_CONFIDENCE,
+            "context_quote": quotes.get(contact_type),
             # status defaults to 'pending' via server_default
-        )
-        session.add(row)
-        await session.flush()
-        extracted_ids.append(row.extracted_id)
+        })
 
+    if not rows:
+        return []
+
+    stmt = (
+        pg_insert(AnalysisExtractedIdentity)
+        .values(rows)
+        .on_conflict_do_nothing(
+            index_elements=["chat_id", "contact_type", "value"],
+            index_where=sa.text("status = 'pending'"),
+        )
+        .returning(AnalysisExtractedIdentity.extracted_id)
+    )
+    result = await session.execute(stmt)
+    extracted_ids = [int(eid) for eid in result.scalars().all()]
+    await session.flush()
     return extracted_ids
 
 

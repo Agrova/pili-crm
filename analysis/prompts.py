@@ -1,7 +1,7 @@
 """ADR-011 Task 3: Qwen3-14B prompts for the analysis pipeline.
 
-All prompts are version-tagged **v1.2** (matches ``ANALYZER_VERSION``
-``analysis-v1.2+qwen3-14b`` in ``app.analysis.__init__``). Any wording change
+All prompts are version-tagged **v1.3** (matches ``ANALYZER_VERSION``
+``analysis-v1.3+qwen3-14b`` in ``app.analysis.__init__``). Any wording change
 here must be accompanied by a bump of ``ANALYZER_VERSION`` so existing
 ``analysis_chat_analysis`` rows are preserved as history.
 
@@ -13,12 +13,18 @@ Substitution: callers use :func:`render` (plain ``str.replace``) — never
 JSON examples and the example schemas. Avoiding ``.format`` means
 authors don't need to escape braces.
 
-Five prompts exported as module-level constants:
+Six prompts exported as module-level constants:
 
 - ``CHUNK_SUMMARY_PROMPT`` — summarise a single chunk of messages.
 - ``MASTER_SUMMARY_PROMPT`` — merge chunk summaries into one.
 - ``NARRATIVE_PROMPT``      — pass 1, free-form markdown portrait.
 - ``STRUCTURED_EXTRACT_PROMPT`` — pass 2, strict JSON by example.
+  Identity is intentionally always null here — see
+  ``IDENTITY_EXTRACT_PROMPT`` (v1.3 architecture).
+- ``IDENTITY_EXTRACT_PROMPT`` — separate identity-only extraction run
+  directly over raw chunked messages with role tags, bypassing the
+  narrative-pipeline lossy compression that previously dropped phone
+  + address out of single delivery-string messages (chat 6544 smoke).
 - ``MATCHING_PROMPT``       — catalog matching verdict per order item.
 
 Two variants of the pass-2 prompt are provided:
@@ -38,7 +44,7 @@ from typing import Any
 
 from app.analysis.schemas import StructuredExtract
 
-PROMPTS_VERSION = "v1.2"
+PROMPTS_VERSION = "v1.3"
 
 
 def render(template: str, **values: Any) -> str:
@@ -129,36 +135,11 @@ markdown, с разделами ниже. Это narrative-описание, а 
 живым языком, полными предложениями.
 
 # Клиент
-Кто этот клиент: имя, упоминаемый никнейм, телефон, контактные данные.
-В нашем магазине заказчик и получатель — обычно один и тот же человек.
-ФИО, фамилия, отчество и телефон, появляющиеся в строках адресов
-доставки (СДЭК, Яндекс.Доставка, Почта России, курьерская служба) или в
-реквизитах оплаты (карта, банковский счёт), в подавляющем большинстве
-случаев и есть identity клиента, даже если в начале переписки он
-представлялся только никнеймом или вовсе не представлялся. Извлекай эти
-данные в раздел «# Клиент» наравне с явным представлением: указывай ФИО
-получателя как имя клиента, телефон получателя как телефон клиента,
-адрес доставки и способ доставки (СДЭК / Яндекс / Почта / курьер /
-самовывоз) — всё это валидные источники identity. Если в одном-двух
-предложениях встречаются вместе адрес доставки + ФИО + телефон — это
-полный набор identity клиента, не воспринимай его как чисто
-логистическую информацию.
-В материале каждое сообщение помечено ролью отправителя в формате
-`[YYYY-MM-DD HH:MM | id=N | роль]`, где роль — `операт.` (владелец
-магазина, продавец) или `клиент` (покупатель). Имя клиента ищи прежде
-всего в сообщениях с тегом `[клиент]`: само-представления («меня зовут
-Иван»), подписи в адресах доставки, имена в банковских реквизитах.
-Сообщения от `[операт.]` — это речь продавца, **не** клиента; ФИО
-оператора в identity клиента не записывай. Если оператор обращается к
-клиенту по имени («Добрый день, Иван», «Кристина, отправил трек») — это
-валидный косвенный сигнал имени клиента, фиксируй такое имя в
-`name_guess`. В свободном поле `confidence_notes` коротко укажи
-источник: «имя из обращения оператора» или «имя из подписи клиента»,
-чтобы оператор при модерации видел уверенность атрибуции. Третьи лица,
-упомянутые клиентом или оператором в тексте сообщений («Ещё Фёдор
-Алексеевич говорит, нужен угольник», «передай Марине привет»), клиентом
-**не являются** — в раздел «# Клиент» их не вноси; при необходимости
-упомяни в «# История взаимодействия» как «упоминается третье лицо».
+Кратко опиши клиента: имя/никнейм/контакты, если они упомянуты в
+переписке. Если данных нет — пиши «нет данных». Подробное извлечение
+identity (ФИО, телефон, адрес из строк доставки) выполняется отдельным
+шагом анализатора — здесь не нужны детальные правила.
+
 Как долго клиент в переписке, как с вами связан.
 
 # История взаимодействия
@@ -212,16 +193,9 @@ markdown, с разделами ниже. Это narrative-описание, а 
 
 STRUCTURED_EXTRACT_EXAMPLE: dict[str, Any] = {
     "_v": 1,
-    "identity": {
-        "name_guess": "Иван Петров",
-        "telegram_username": "ivan_wood",
-        "phone": "+79161234567",
-        "email": None,
-        "city": "Москва",
-        "address": "ул. Тверская, д. 1, кв. 10",
-        "delivery_method": "СДЭК",
-        "confidence_notes": "Имя в первом сообщении, телефон при оформлении отправки",
-    },
+    # Identity is extracted by a separate run (IDENTITY_EXTRACT_PROMPT)
+    # directly from chunks — this prompt must always emit null here.
+    "identity": None,
     "preferences": [
         {
             "product_hint": "Veritas зензубель",
@@ -285,11 +259,9 @@ STRUCTURED_EXTRACT_PROMPT = """\
 - Допустимые значения `status_delivery`: ordered, shipped, delivered,
   returned, unknown.
 - Допустимые значения `status_payment`: unpaid, partial, paid, unknown.
-- Поля `identity.address` и `identity.delivery_method` извлекай из
-  строк адресов доставки (СДЭК / Яндекс.Доставка / Почта России /
-  курьер). Если в той же строке адреса упоминаются ФИО или телефон —
-  это identity клиента: заполняй также `identity.name_guess` и
-  `identity.phone` соответствующими значениями.
+- Поле `identity` всегда `null`. Identity извлекается отдельным шагом
+  анализатора — здесь не заполняй, это сэкономит токены и упростит
+  обработку.
 
 Пример правильного ответа (с вымышленными данными, формат обязателен):
 
@@ -333,6 +305,83 @@ STRUCTURED_EXTRACT_PROMPT_WITH_SCHEMA = """\
 
 JSON:
 """.replace("{schema_json}", _STRUCTURED_EXTRACT_SCHEMA_JSON)
+
+
+# ── IDENTITY_EXTRACT_PROMPT (v1.3 architecture) ─────────────────────────────
+#
+# Direct extraction of ``Identity`` from raw chunked messages with role
+# tags, called once per chat (not per chunk) — see
+# ``analysis/identity_extract.py``. Bypasses NARRATIVE+STRUCTURED_EXTRACT
+# compression so single-message delivery strings («Сдэк: <addr>. <ФИО>
+# <phone>») survive intact.
+
+IDENTITY_EXTRACT_PROMPT = """\
+Тебе дан полный текст переписки с клиентом магазина ручного столярного
+инструмента. Каждое сообщение помечено в формате
+`[YYYY-MM-DD HH:MM | id=N | роль]`, где роль — `операт.` (владелец
+магазина, продавец) или `клиент` (покупатель).
+
+Твоя задача — извлечь identity клиента (того, кто пишет с тегом
+`[клиент]`) в виде строго JSON по схеме ниже. Без markdown-обёртки,
+без пояснений: первый символ ответа — `{`, последний — `}`.
+
+Схема (все поля nullable):
+{
+  "name_guess": "<ФИО клиента или null>",
+  "telegram_username": "<@username клиента или null>",
+  "phone": "<телефон клиента или null>",
+  "email": "<email клиента или null>",
+  "city": "<город клиента или null>",
+  "address": "<адрес доставки или null>",
+  "delivery_method": "<СДЭК / Яндекс.Доставка / Почта России / курьер / самовывоз или null>",
+  "confidence_notes": "<краткое пояснение источника, на русском, или null>"
+}
+
+Жёсткие правила (нарушать запрещено):
+1. Если поле НЕ упомянуто буквально в тексте переписки — ставь `null`.
+   Не выдумывай и не додумывай.
+2. Identity — это клиент, не оператор. ФИО оператора, его телефон,
+   его адрес — не identity клиента. Игнорируй.
+3. Имена третьих лиц, упомянутые в тексте («передай Марине», «Иван
+   говорит, нужен инструмент», «Фёдор Алексеевич просил угольник»), —
+   не identity клиента. Игнорируй.
+4. Если оператор обращается к клиенту по имени («Добрый день, Анна»,
+   «Кристина, отправил трек») — это валидный косвенный сигнал:
+   записывай это имя в `name_guess`, в `confidence_notes` укажи
+   «имя из обращения оператора».
+5. Само-представление клиента («меня зовут Анна», «это Иван») —
+   записывай в `name_guess`, в `confidence_notes` укажи
+   «само-представление клиента».
+6. Строки доставки в формате `Сдэк: <адрес>. <ФИО> <телефон>`,
+   `Яндекс.Доставка: <адрес> ФИО ...`, банковские реквизиты с ФИО —
+   полный набор identity клиента: извлекай ВСЕ три поля одновременно
+   (`name_guess` + `phone` + `address`). Не разбивай этот сигнал.
+7. Если за всю переписку клиент представлялся под несколькими ФИО —
+   бери последнее упомянутое (предположение: уточнение реальное имя
+   при оформлении доставки).
+
+Пример входа:
+[2025-03-15 12:00 | id=100 | клиент] Здравствуйте, рубанок Veritas есть?
+[2025-03-15 12:01 | id=101 | операт.] Добрый день, Анна. Есть, 45000.
+[2025-03-15 13:00 | id=102 | клиент] Беру. Сдэк: Тверская 1, кв 5. Анна Иванова +79161234567
+
+Пример выхода:
+{
+  "name_guess": "Анна Иванова",
+  "telegram_username": null,
+  "phone": "+79161234567",
+  "email": null,
+  "city": null,
+  "address": "Тверская 1, кв 5",
+  "delivery_method": "СДЭК",
+  "confidence_notes": "ФИО, телефон, адрес — из подписи клиента; имя также из обращения оператора"
+}
+
+Переписка:
+{messages}
+
+JSON:
+"""
 
 
 MATCHING_PROMPT = """\
@@ -389,5 +438,6 @@ __all__ = [
     "STRUCTURED_EXTRACT_PROMPT",
     "STRUCTURED_EXTRACT_PROMPT_WITH_SCHEMA",
     "STRUCTURED_EXTRACT_EXAMPLE",
+    "IDENTITY_EXTRACT_PROMPT",
     "MATCHING_PROMPT",
 ]

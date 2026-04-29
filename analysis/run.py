@@ -61,6 +61,7 @@ from analysis.chunking import (
     load_chat_messages,
     split_into_chunks,
 )
+from analysis.identity_extract import extract_identity_from_chunks
 from analysis.llm_client import LLMRequestError, LMStudioClient
 from analysis.matching import (
     CatalogEntry,
@@ -422,6 +423,16 @@ async def process_chat(
         extract = await _build_extract(
             narrative, llm_client, prompt_variant=prompt_variant
         )
+
+        # ADR-011 X1 iter 4: identity comes from a separate extraction
+        # path (raw chunks, not narrative) — overwrites whatever the
+        # narrative-driven STRUCTURED_EXTRACT may have produced.
+        # TODO: parallel via asyncio.gather as future optimization
+        # (currently sequential for simplicity; +20-40s per chat).
+        identity_from_extract = await extract_identity_from_chunks(
+            chunks, llm_client
+        )
+        extract.identity = identity_from_extract
 
         await set_stage(session, chat_id=chat_id, stage="matching")
         await commit_fn()

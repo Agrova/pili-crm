@@ -708,20 +708,20 @@ async def test_apply_analysis_unreviewed_chat_quarantines_only(
     assert all(r[2] is None for r in rows)
 
 
-# ── Bonus (14): force-rerun documents duplicate behaviour ──────────────────
+# ── ADR-011 X1 iter 4: dedup behaviour (UNIQUE pending index) ───────────────
 
 
-async def test_apply_analysis_rerun_creates_duplicate_quarantine_rows(
+async def test_apply_analysis_rerun_dedupes_pending(
     db_session: AsyncSession,
 ) -> None:
-    """MVP-decision: ``extract_identity_to_quarantine`` never deduplicates.
+    """v1.3 dedup: rerun with the same identity does NOT spawn a duplicate.
 
-    On a rerun the same identity value is written again as a fresh
-    ``pending`` row. The auto-apply gate keeps the duplicate ``pending``
-    because the target column is no longer NULL after the first run.
-    Operators see both rows in Cowork; deduplication is out of scope for
-    X1 — same value can legitimately surface from multiple chats, so a
-    UNIQUE constraint was deliberately omitted.
+    Replaces the v1.2 "documents-duplicate-behaviour" expectation: the
+    partial UNIQUE index ``uq_extracted_identity_pending`` over
+    ``(chat_id, contact_type, value) WHERE status='pending'`` makes the
+    second insert a no-op via ``ON CONFLICT DO NOTHING``. Cowork queue
+    stays clean; ``applied`` / ``rejected`` history is unaffected
+    because the index is partial.
     """
     chat_id = await _seed_chat(db_session, "rerun")
     customer_id = await _make_customer(db_session, "rerun")
@@ -735,7 +735,6 @@ async def test_apply_analysis_rerun_creates_duplicate_quarantine_rows(
         analyzer_version="v0.idq+rerun",
     )
 
-    # First run — quarantine row, kept_pending (default medium).
     first = await service.apply_analysis_to_customer(
         db_session, analysis_id=aid1
     )
@@ -748,17 +747,15 @@ async def test_apply_analysis_rerun_creates_duplicate_quarantine_rows(
         db_session, customer_id, "phone", "+7 RERUN"
     )
 
-    # Rerun — same chat, same analysis_id. Identity-only path doesn't
-    # journal anything in analysis_created_entities, so force=True is a
-    # no-op here; we pass it to mirror the realistic operator action.
     second = await service.apply_analysis_to_customer(
         db_session, analysis_id=aid1, force=True
     )
-    assert second.identities_quarantined == 1
+    # Dedup: rerun finds the existing pending row, ON CONFLICT DO NOTHING
+    # → no new insert, returned ID list is empty, counter is 0.
+    assert second.identities_quarantined == 0
     assert second.identities_auto_applied == 0
-    assert second.identities_kept_pending == 1
+    assert second.identities_kept_pending == 0
 
-    # Two quarantine rows now exist for the same chat+contact+value.
     rows = (
         await db_session.execute(
             text(
@@ -769,5 +766,140 @@ async def test_apply_analysis_rerun_creates_duplicate_quarantine_rows(
             {"cid": chat_id},
         )
     ).all()
-    assert len(rows) == 2
-    assert {r[0] for r in rows} == {"pending"}
+    assert len(rows) == 1
+    assert rows[0][0] == "pending"
+
+
+async def test_quarantine_dedup_skips_existing_pending(
+    db_session: AsyncSession,
+) -> None:
+    """Re-extraction of the same identity returns an empty list."""
+    chat_id = await _seed_chat(db_session, "dedup_basic")
+    customer_id = await _make_customer(db_session, "dedup_basic")
+
+    first = await extract_identity_to_quarantine(
+        db_session,
+        chat_id=chat_id,
+        customer_id=customer_id,
+        analyzer_version="v0.idq+dedup1",
+        identity_data={"phone": "+7 DUP1"},
+    )
+    assert len(first) == 1
+
+    second = await extract_identity_to_quarantine(
+        db_session,
+        chat_id=chat_id,
+        customer_id=customer_id,
+        analyzer_version="v0.idq+dedup1",
+        identity_data={"phone": "+7 DUP1"},
+    )
+    assert second == []
+
+    rows = (
+        await db_session.execute(
+            text(
+                "SELECT COUNT(*) FROM analysis_extracted_identity "
+                "WHERE chat_id = :cid AND contact_type = 'phone' "
+                "AND value = '+7 DUP1' AND status = 'pending'"
+            ),
+            {"cid": chat_id},
+        )
+    ).scalar()
+    assert rows == 1
+
+
+async def test_quarantine_dedup_partial_overlap(
+    db_session: AsyncSession,
+) -> None:
+    """Mixed re-extract: existing phone deduped, new email inserted."""
+    chat_id = await _seed_chat(db_session, "dedup_partial")
+    customer_id = await _make_customer(db_session, "dedup_partial")
+
+    seed = await extract_identity_to_quarantine(
+        db_session,
+        chat_id=chat_id,
+        customer_id=customer_id,
+        analyzer_version="v0.idq+dedup2",
+        identity_data={"phone": "+7 PHONEDUP"},
+    )
+    assert len(seed) == 1
+
+    new = await extract_identity_to_quarantine(
+        db_session,
+        chat_id=chat_id,
+        customer_id=customer_id,
+        analyzer_version="v0.idq+dedup2",
+        identity_data={
+            "phone": "+7 PHONEDUP",
+            "email": "newdup@example.com",
+        },
+    )
+    # phone collides, email is new → exactly 1 new row returned.
+    assert len(new) == 1
+
+    rows = (
+        await db_session.execute(
+            text(
+                "SELECT contact_type FROM analysis_extracted_identity "
+                "WHERE chat_id = :cid AND status = 'pending' "
+                "ORDER BY contact_type"
+            ),
+            {"cid": chat_id},
+        )
+    ).all()
+    assert [r[0] for r in rows] == ["email", "phone"]
+
+
+async def test_quarantine_dedup_allows_new_pending_after_applied(
+    db_session: AsyncSession,
+) -> None:
+    """Partial UNIQUE only covers status='pending' — applied/rejected don't block."""
+    chat_id = await _seed_chat(db_session, "dedup_applied")
+    customer_id = await _make_customer(db_session, "dedup_applied")
+
+    first = await extract_identity_to_quarantine(
+        db_session,
+        chat_id=chat_id,
+        customer_id=customer_id,
+        analyzer_version="v0.idq+dedup3",
+        identity_data={"phone": "+7 APPLIED"},
+    )
+    assert len(first) == 1
+
+    # Simulate operator approval — pending → applied. Required side
+    # fields for the CHECK ((status='pending') = (applied_*=NULL)).
+    await db_session.execute(
+        text(
+            "UPDATE analysis_extracted_identity SET "
+            "status = 'applied', "
+            "applied_action = 'overwrite', "
+            "applied_by = 'operator', "
+            "applied_at = now() "
+            "WHERE extracted_id = :eid"
+        ),
+        {"eid": first[0]},
+    )
+    await db_session.flush()
+
+    second = await extract_identity_to_quarantine(
+        db_session,
+        chat_id=chat_id,
+        customer_id=customer_id,
+        analyzer_version="v0.idq+dedup3",
+        identity_data={"phone": "+7 APPLIED"},
+    )
+    # No pending row exists for this (chat, type, value) anymore →
+    # the new insert succeeds.
+    assert len(second) == 1
+
+    rows = (
+        await db_session.execute(
+            text(
+                "SELECT status FROM analysis_extracted_identity "
+                "WHERE chat_id = :cid AND contact_type = 'phone' "
+                "AND value = '+7 APPLIED' ORDER BY extracted_id"
+            ),
+            {"cid": chat_id},
+        )
+    ).all()
+    assert [r[0] for r in rows] == ["applied", "pending"]
