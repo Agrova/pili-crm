@@ -185,6 +185,37 @@ def _select_extract_prompt(variant: PromptVariant) -> str:
 # ── Chat selection ──────────────────────────────────────────────────────────
 
 
+def parse_chat_id_range(value: str) -> tuple[int, int]:
+    """Parse ``START..END`` into ``(start, end)`` inclusive.
+
+    Both sides must be non-negative integers with START <= END.
+    Raises ``argparse.ArgumentTypeError`` on bad format so argparse
+    displays a clean error message.
+    """
+    import argparse as _ap
+
+    parts = value.split("..")
+    if len(parts) != 2:
+        raise _ap.ArgumentTypeError(
+            f"--chat-id-range must be START..END (e.g. '1..193'), got: {value!r}"
+        )
+    try:
+        start, end = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise _ap.ArgumentTypeError(
+            f"--chat-id-range: both START and END must be integers, got: {value!r}"
+        )
+    if start < 0 or end < 0:
+        raise _ap.ArgumentTypeError(
+            f"--chat-id-range: START and END must be >= 0, got: {value!r}"
+        )
+    if start > end:
+        raise _ap.ArgumentTypeError(
+            f"--chat-id-range: START must be <= END, got: {start} > {end}"
+        )
+    return start, end
+
+
 async def select_chat_ids(session: AsyncSession, args: argparse.Namespace) -> list[int]:
     """Resolve CLI selectors into a concrete list of chat ids."""
     if args.chat_id is not None:
@@ -192,6 +223,15 @@ async def select_chat_ids(session: AsyncSession, args: argparse.Namespace) -> li
 
     if args.chat_ids:
         return [int(x) for x in args.chat_ids.split(",") if x.strip()]
+
+    if args.chat_id_range is not None:
+        start, end = args.chat_id_range
+        stmt = select(CommunicationsTelegramChat.id).where(
+            CommunicationsTelegramChat.id >= start,
+            CommunicationsTelegramChat.id <= end,
+        ).order_by(CommunicationsTelegramChat.id)
+        result = await session.execute(stmt)
+        return [int(cid) for cid in result.scalars().all()]
 
     stmt = select(CommunicationsTelegramChat.id)
     if args.review_status is not None:
@@ -518,6 +558,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="Comma-separated chat ids, e.g. '1,2,3'.",
     )
+    sel.add_argument(
+        "--chat-id-range",
+        type=parse_chat_id_range,
+        metavar="START..END",
+        help=(
+            "Inclusive range of chat ids, e.g. '1..193'. "
+            "Queries communications_telegram_chat.id BETWEEN START AND END. "
+            "Use with --worker-tag to assign disjoint ranges to different machines "
+            "(ADR-011 Addendum 2: PC=1..193, Mac=194..386)."
+        ),
+    )
     sel.add_argument("--all", action="store_true", help="All chats.")
     sel.add_argument(
         "--since",
@@ -759,6 +810,7 @@ __all__ = [
     "filter_already_processed",
     "install_sigint_handler",
     "main",
+    "parse_chat_id_range",
     "process_chat",
     "reset_shutdown_flag",
     "select_chat_ids",

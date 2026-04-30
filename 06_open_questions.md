@@ -31,22 +31,27 @@
 
 ## Открытые вопросы
 
-### [2026-04-28] — Identity quarantine: MCP-tools для ручного apply (для name + overwrite)
+### [2026-04-30] — ADR-016 G18: измерительный шаг до приоритизации артефактов и бота
 
-- **Суть:** реализация TZ-IdentityQuarantine (commit `c4fa6aa`) включает только сервисный слой — `extract_identity_to_quarantine` (запись в карантин) и `auto_apply_safe_identity_updates` (auto для NULL-колонок + high). **MCP-tools для ручной модерации через Cowork отсутствуют** — оператор пока не может через Cowork увидеть pending-записи и применить их. Это финальное звено для замыкания workflow X1.
-- **Что нужно сделать:**
-  1. **`list_pending_identity_updates(customer_id: int) -> list[dict]`** — read-tool. Возвращает все pending-записи для клиента: `extracted_id, chat_id, analyzer_version, contact_type, value, confidence, context_quote, extracted_at`. Сортировка по `extracted_at DESC` (новые первыми) или `confidence` ('high' → 'medium' → 'low'). Без пагинации на MVP — на одного клиента редко больше 10-20 записей.
-  2. **`apply_identity_update(extracted_id: int, action: Literal['overwrite', 'add_as_secondary', 'reject']) -> dict`** — write-tool.
-     - `overwrite`: пишет `value` в соответствующую колонку `OrdersCustomer` (включая `name` — это критичный кейс, для NOT NULL колонки auto-apply невозможен по архитектуре). После успеха: `status='applied'`, `applied_action='overwrite'`, `applied_by='operator'`, `applied_at=now()`. Если коллизия UNIQUE на email — savepoint и `applied_action=None` + warning. См. open question «Email UNIQUE-конфликт».
-     - `reject`: только обновление `analysis_extracted_identity` — `status='rejected'`, `applied_by='operator'`, `applied_at=now()`. Колонка `OrdersCustomer` не трогается.
-     - `add_as_secondary`: на текущей итерации возвращает ошибку `NotImplementedError` («not yet implemented — будет реализовано вместе с таблицей customer_contacts»).
-  3. **Тесты:** ~6-8 тестов на edge cases (apply на pending запись, apply на уже applied, apply на NULL customer_id (ошибка — нельзя писать без клиента), reject, name overwrite, email collision savepoint, ...).
-  4. **Контракт для Cowork:** документировать в `crm-mcp/IMPROVEMENTS.md` как новые tools — оператор узнает про них через системный промт Cowork.
-- **Когда сделать:** после batch-commit fix и перед smoke full analysis на чате Kristina (6544). Для smoke на Kristina **обязательно нужен `apply_identity_update`** — кейс Kristina содержит ФИО + СДЭК-адрес + телефон, всё критично, и `name_guess` (Саргсян Кристина Степановна) auto-apply невозможен.
-- **Связанные:** TZ-IdentityQuarantine (закрыта 2026-04-28), будущая запись о `customer_contacts` (для `add_as_secondary`).
-- **Чат:** Prompt Factory for Claude Code (миграция-нет + 2 MCP-tools + 6-8 тестов; Sonnet 4.6 + Medium, ~60-90 минут)
-- **Приоритет:** **HIGH** (блокер для smoke full analysis на Kristina; full analysis на 386 чатах без этих tools потеряет identity-данные кейса Kristina и аналогичных)
-- **Статус:** open
+- **Суть:** ADR-016 (экономия токенов на рутине + мобильный capture) принят на основании **интуитивного, неподтверждённого** ощущения оператора — «то что не требует рассуждений должно дублироваться интерфейсом без токенов». До запуска G18.1 (артефакты) и G18.2 (бот) собираем данные через **две недели авто-журнала операционного Cowork**, чтобы определить порядок реализации подзадач и приоритет конкретных артефактов.
+- **Что сделано (2026-04-30):**
+  1. Создан `docs/inbox_measurement.md` со структурой и эвристиками.
+  2. В `docs/cowork-system-prompt.md` добавлен раздел 11 «Сбор измерений для G18» — Cowork сам пишет append-only по эвристикам.
+  3. Период сбора: **2026-04-30 — 2026-05-14**. Оператор вручную ничего не заполняет.
+- **Дата разбора:** **2026-05-14**, отдельный Cowork-arch чат (Sonnet 4.6 + Low, ~15-20 минут). После разбора раздел 11 удалить из промта, файл архивировать.
+- **Что считать достаточным сигналом:**
+  - **Артефакт реализуем**, если соответствующая категория запросов в Request log за 2 недели встречается ≥ 10 раз (≈ ежедневно) **и** хотя бы половина имеет `response_size=medium|large` **и** хотя бы 30% имеют `could_be_artifact=yes`.
+  - **Артефакт откладываем**, если категория встречается < 5 раз за 2 недели — рутины недостаточно, чтобы окупить разработку.
+  - Зона 5-9 — обсуждаем (возможно, разовая боль, не паттерн).
+  - **Бот реализуем**, если в Capture log за 2 недели накопилось ≥ 5 записей с `was_lost=true` или ≥ 8 любых записей — иначе откладываем G18.2 в спящие, capture обходимся через Cowork с Mac.
+- **Что делать при срыве сбора:**
+  - Если Cowork по факту ничего не пишет в журнал к 2026-05-07 (середина периода) — проверить, что раздел 11 действительно подгружается в промт; пересмотреть эвристики если оператор замечает пропуски.
+  - Если данных мало даже после двух недель — продлеваем сбор до 2026-05-21, не реализуем «вслепую».
+- **Контекст возникновения:** ADR-016 G18 принят 2026-04-30. Изначально pre-step предполагал ручной журнал оператора, но 2026-04-30 заменён на авто-сбор через Cowork (по запросу оператора — вручную ритуал не выдержится).
+- **Связанные:** ADR-016, G18 в `docs/PLAN.md`, G14 (полный мобильный CRM — отделён от G18 явно), `docs/cowork-system-prompt.md` раздел 11.
+- **Чат:** Архитектурный штаб 2026-05-14 (короткая сессия разбора; Sonnet 4.6 + Low; ~15-20 минут)
+- **Приоритет:** medium (не блокирует Cowork-работу, но влияет на качество выбора в G18)
+- **Статус:** in-progress (сбор данных идёт)
 
 ### [2026-04-28] — Identity quarantine: email UNIQUE-конфликт без savepoint при будущей активации auto-apply
 
@@ -118,35 +123,6 @@
 - **Приоритет:** medium (терпимое состояние, починить после оценки реального влияния на качество)
 - **Статус:** open
 
-### [2026-04-26] — ADR-011 Addendum 2 — реализация распределения Mac master + PC worker
-
-- **Суть:** боевой прогон 850 unreviewed-чатов на Mac исключён из-за теплового ограничения (throttling через ~1 час непрерывной нагрузки). Решение: PC (RTX 3060 Ti, 24/7) выполняет тяжёлые LLM-прогоны как worker, Mac остаётся master с боевой БД. Sync результатов pull-моделью раз в сутки. Apply (запись orders, profile updates) — только на Mac под контролем оператора через Cowork.
-- **Архитектурное решение:** зафиксировано в `ADR-011-addendum-2-pc-worker.md` (2026-04-26).
-- **Принятая схема координации Mac+PC (2026-04-27, фиксированное деление пополам upfront + sync раз в сутки):**
-  - **Сетевая реальность:** PC дома 24/7. Mac кочует с оператором (офис, дорога, дом). В одной локалке только когда Mac дома. Большую часть времени — разные сети. **Online-координация через сетевое подключение к prod БД невозможна.**
-  - **Каждый worker — своя БД.** PC БД на PC, Mac БД на Mac. Нет общей prod БД, нет advisory lock'ов, нет онлайн-координации.
-  - **Чаты делятся пополам upfront по `chat_id`.** Например, для full analysis на 386 чатах client+possible_client: PC получает фиксированный диапазон ~193 чата (нижняя половина по chat_id), Mac — ~193 чата (верхняя половина). Деление детерминированное, заранее известно каждой стороне.
-  - **Запуск:** `python3 -m analysis.run --chat-id-range 1..193 --worker-tag pc` на PC (24/7 в `nohup`, завершается сам когда диапазон обработан). На Mac — `--chat-id-range 194..386 --worker-tag mac` сессиями по 1-2 часа когда оператор за машиной.
-  - **Sync раз в сутки (по команде оператора):** Mac пуллит результаты PC (`analyzer_version LIKE '%@pc'`) с PC БД через ad-hoc подключение когда Mac дома (USB-сеть, локалка, или промежуточная флешка). Записи мерджатся в Mac БД через `INSERT ... ON CONFLICT DO NOTHING` (UNIQUE на `(chat_id, analyzer_version)` гарантирует отсутствие дублей).
-  - **«PC добивает остаток»:** когда PC закончил свой диапазон 1..193 → завершился. Если Mac ещё не обработал свой остаток (например, осталось 30 чатов) — оператор передаёт PC список конкретных chat_id из остатка Mac: `python3 -m analysis.run --chat-ids 250,251,255,260,... --worker-tag pc`. PC доделывает.
-  - **Sync identity quarantine:** ОБЕ таблицы (`analysis_chat_analysis` И `analysis_extracted_identity`) синхронизируются вместе. Поскольку PC и Mac обрабатывают **непересекающиеся** диапазоны chat_id — записи в `analysis_extracted_identity` тоже не пересекаются (FK на chat_id). PK конфликтов между worker'ами не будет, потому что зоны зон.
-- **Прогресс:**
-  1. ✅ **CLI-флаги `--worker-tag` и `--no-apply` в `analysis/run.py`** — реализовано коммитом `90da591` (2026-04-26). Mac (default tag=mac) пишет `v1.0+qwen3-14b` без суффикса (обратная совместимость), PC (`--worker-tag pc`) пишет `v1.0+qwen3-14b@pc`. `--no-apply` пропускает фазу apply на PC. +5 регрессионных тестов в `tests/analysis/test_run_unit.py`.
-  2. ⏸ **Параметр `--chat-id-range` или `--chat-ids` в `analysis/run.py`** — для разделения работы upfront. **Новый item, нужен до full analysis.** Pre-flight Claude Code должен проверить — возможно параметр уже есть в каком-то виде (`--chat-id` поддерживается, нужен range/list).
-  3. ✅ **Развёртывание PC:** Docker Engine в WSL2 + Postgres + миграции + импорт subset БД (chats + messages) с Mac. Runbook: `runbook_pc_deployment.md`. Завершено 2026-04-28.
-  4. ⏸ **Sync-скрипт `scripts/sync_pc_analyses.sh`** — Mac тянет с PC записи `analyzer_version LIKE '%@pc'` через `pg_dump`/`psql` с `ON CONFLICT DO NOTHING`. Должен покрывать ОБЕ таблицы: `analysis_chat_analysis` + `analysis_extracted_identity`. Реализуется отдельной задачей через Prompt Factory.
-  5. ✅ **Identity quarantine table + service** — реализовано коммитом `c4fa6aa` (2026-04-28). Таблица `analysis_extracted_identity` присутствует в Mac prod БД (alembic upgrade head 2026-04-28), pытует sync на PC. Сервис не требует изменений со стороны Mac+PC координации.
-- **Следующие шаги:**
-  - Identity quarantine MCP-tools (см. отдельную open question).
-  - Реализация batch-commit fix.
-  - Smoke full analysis на чате Kristina (6544).
-  - Реализация `--chat-id-range` параметра + sync-скрипта (Prompt Factory).
-  - Запуск full analysis с фиксированным делением: PC берёт 1..193, Mac берёт 194..386. Параллельно работают, sync раз в сутки.
-- **Связанные:** запись «Конкурентность `analysis_chat_analysis_state`» — больше **не блокер** при фиксированном делении пополам (worker'ы не пересекаются), но остаётся открытой как defense-in-depth и для будущего work-stealing если когда-то перейдём на общую БД.
-- **Замещает:** open question «`ANALYZER_VERSION` не отражает фактическую модель» — закрыто коммитом `90da591`, перенесено в архив.
-- **Чат:** Архитектурный штаб (отслеживание прогресса). Подзадачи реализации — Prompt Factory.
-- **Приоритет:** **HIGH** (текущая основная архитектурная активность).
-- **Статус:** in-progress
 
 ### [2026-04-26] — Конкурентность `analysis_chat_analysis_state` при распределённой работе (downgraded 2026-04-27)
 

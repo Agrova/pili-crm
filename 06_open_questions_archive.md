@@ -15,6 +15,37 @@
 
 ## Закрытые вопросы
 
+### [2026-04-26] — ADR-011 Addendum 2 — реализация распределения Mac master + PC worker
+
+- **Суть:** боевой прогон 850 unreviewed-чатов на Mac исключён из-за теплового ограничения (throttling через ~1 час непрерывной нагрузки). Решение: PC (RTX 3060 Ti, 24/7) выполняет тяжёлые LLM-прогоны как worker, Mac остаётся master с боевой БД. Sync результатов pull-моделью раз в сутки. Apply (запись orders, profile updates) — только на Mac под контролем оператора через Cowork.
+- **Архитектурное решение:** зафиксировано в `ADR-011-addendum-2-pc-worker.md` (2026-04-26).
+- **Принятая схема координации Mac+PC:** фиксированное деление 386 чатов пополам upfront. PC = 1..193 (`--chat-id-range 1..193`), Mac = 194..386. Sync PC → Mac раз в сутки вручную.
+- **Прогресс (все ✅):**
+  1. ✅ CLI-флаги `--worker-tag` и `--no-apply` — коммит `90da591` (2026-04-26).
+  2. ✅ `--chat-id-range` в `analysis/run.py` — G2, 2026-04-30.
+  3. ✅ Развёртывание PC — `runbook_pc_deployment.md`, 2026-04-28.
+  4. ✅ `scripts/sync_pc_analyses.sh` — G2, 2026-04-30.
+  5. ✅ Identity quarantine table + service — коммит `c4fa6aa` (2026-04-28).
+- **Чат:** Архитектурный штаб.
+- **Приоритет:** HIGH → закрыт.
+- **Статус:** closed
+- **Решение:** G2 закрыт 2026-04-30. Все 5 пунктов реализованы. CP3 достигнут. Следующий шаг — G3 (smoke + полный прогон).
+
+### [2026-04-28] — Identity quarantine: MCP-tools для ручного apply (`list_pending_identity_updates`, `apply_identity_update`)
+
+- **Статус:** closed
+- **Закрыт:** 2026-04-29, коммит `3723597` (`feat(crm-mcp): identity quarantine MCP-tools (ADR-011 X1)`).
+- **Решение:** реализованы два MCP-tool:
+  - `list_pending_identity_updates(customer_id)` — read-tool. Возвращает pending-записи из `analysis_extracted_identity`, сортировка по confidence (high → medium → low), затем `extracted_at DESC`. Включает `current_customer_value` для каждой записи.
+  - `apply_identity_update(extracted_id, action)` — write-tool. Actions: `overwrite` (записывает в колонку `OrdersCustomer`, включая `name`); `reject` (только обновление статуса в карантине); `add_as_secondary` (возвращает `{"error": "not_yet_implemented"}`).
+  - Email UNIQUE-коллизия при `overwrite` — обёрнута в `session.begin_nested()` (SAVEPOINT); при IntegrityError возвращает `{"error": "email_unique_collision", "conflicting_customer_id": N}`, карантинная запись остаётся `pending`.
+  - Неизвестный `contact_type` без целевой колонки → `{"error": "no_target_column"}`.
+  - Нулевой `customer_id` в карантине → `{"error": "unlinked_chat_quarantine", "chat_id": M}`.
+  - Все operational notes задокументированы в `crm-mcp/IMPROVEMENTS.md` (секция 2026-04-29).
+- **Итого tools:** 13 (были 11 после ADR-010 Задание 2).
+- **Связано:** TZ-IdentityQuarantine (закрыта 2026-04-28), коммит `c4fa6aa`; ADR-011 X1.
+- **Контекст возникновения:** запись была создана 2026-04-28 как финальное звено замыкания workflow X1. Приоритет HIGH — блокировал smoke full analysis на чате Kristina (6544).
+
 ### [2026-04-28] — ADR-011: identity updates через карантин (вариант X1) — закрыто реализацией
 
 - **Статус:** closed

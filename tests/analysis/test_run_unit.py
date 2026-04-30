@@ -179,6 +179,92 @@ async def test_build_extract_recovers_on_retry() -> None:
     assert len(llm.calls) == 2
 
 
+# ── ADR-011 Addendum 2 G2: parse_chat_id_range + --chat-id-range CLI ────────
+
+
+def test_parse_chat_id_range_valid() -> None:
+    """Normal case: parse '1..193' → (1, 193)."""
+    assert run.parse_chat_id_range("1..193") == (1, 193)
+
+
+def test_parse_chat_id_range_single_value() -> None:
+    """Single id: '42..42' → (42, 42) (degenerate range)."""
+    assert run.parse_chat_id_range("42..42") == (42, 42)
+
+
+def test_parse_chat_id_range_zero_start() -> None:
+    """Zero start is allowed: '0..10' → (0, 10)."""
+    assert run.parse_chat_id_range("0..10") == (0, 10)
+
+
+def test_parse_chat_id_range_missing_separator() -> None:
+    """No '..' separator → ArgumentTypeError."""
+    import argparse as _ap
+
+    with pytest.raises(_ap.ArgumentTypeError, match="START..END"):
+        run.parse_chat_id_range("1-193")
+
+
+def test_parse_chat_id_range_non_integer() -> None:
+    """Non-integer sides → ArgumentTypeError."""
+    import argparse as _ap
+
+    with pytest.raises(_ap.ArgumentTypeError, match="integers"):
+        run.parse_chat_id_range("a..193")
+
+
+def test_parse_chat_id_range_start_greater_than_end() -> None:
+    """START > END → ArgumentTypeError."""
+    import argparse as _ap
+
+    with pytest.raises(_ap.ArgumentTypeError, match="START must be"):
+        run.parse_chat_id_range("193..1")
+
+
+def test_parse_chat_id_range_negative_values() -> None:
+    """Negative values → ArgumentTypeError."""
+    import argparse as _ap
+
+    with pytest.raises(_ap.ArgumentTypeError, match=">="):
+        run.parse_chat_id_range("-1..10")
+
+
+def test_parser_accepts_chat_id_range() -> None:
+    """--chat-id-range is accepted and parsed to a tuple."""
+    args = run.build_parser().parse_args(["--chat-id-range", "1..193"])
+    assert args.chat_id_range == (1, 193)
+
+
+def test_parser_chat_id_range_mutually_exclusive_with_all() -> None:
+    """--chat-id-range and --all are mutually exclusive."""
+    with pytest.raises(SystemExit):
+        run.build_parser().parse_args(["--chat-id-range", "1..10", "--all"])
+
+
+def test_parser_chat_id_range_mutually_exclusive_with_chat_id() -> None:
+    """--chat-id-range and --chat-id are mutually exclusive."""
+    with pytest.raises(SystemExit):
+        run.build_parser().parse_args(["--chat-id-range", "1..10", "--chat-id", "5"])
+
+
+def test_parser_chat_id_range_mutually_exclusive_with_chat_ids() -> None:
+    """--chat-id-range and --chat-ids are mutually exclusive."""
+    with pytest.raises(SystemExit):
+        run.build_parser().parse_args(["--chat-id-range", "1..10", "--chat-ids", "1,2,3"])
+
+
+def test_parser_chat_id_range_invalid_format_exits() -> None:
+    """Argparse calls parse_chat_id_range; bad format → exit 2."""
+    with pytest.raises(SystemExit):
+        run.build_parser().parse_args(["--chat-id-range", "bad-format"])
+
+
+def test_parser_no_chat_id_range_defaults_to_none() -> None:
+    """When --chat-id-range is not given, args.chat_id_range is None."""
+    args = run.build_parser().parse_args(["--all"])
+    assert args.chat_id_range is None
+
+
 # ── ADR-011 Addendum 2: make_analyzer_version + CLI flags ──────────────────
 
 
