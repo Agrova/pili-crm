@@ -178,5 +178,5 @@ Known operational notes (to watch during real use):
 - **Проблема:** при привязке чата к клиенту tool не проверяет, есть ли уже завершённый `analysis_chat_analysis` для этого чата. Если анализ был прогнан с `--no-apply` (стандартный режим PC-worker), identity-записи не создаются ни при анализе, ни при привязке — оператор должен вручную перезапускать анализ.
 - **Сценарий:** chat 6485 (@vyashin86) прогнан на PC (`--no-apply`), потом привязан к Слава Яшин (id=1688) через `link_chat_to_customer`. `list_pending_identity_updates(1688)` вернул пустой карантин — потому что `apply_analysis_to_customer` ни разу не вызывался. Нужен повторный запуск с `--force`.
 - **Предложение:** при успешной привязке чата проверять наличие записи в `analysis_chat_analysis` со статусом `done`. Если найдена — автоматически вызывать `apply_analysis_to_customer(force=True)` и возвращать результат в ответе tool-а (`identities_quarantined`, `orders_created`). Добавить параметр `apply_existing_analysis: bool = True` для управления поведением.
-- **Статус:** open
-- **Связанные решения:** см. `docs/tool-gaps.md` 2026-04-30 «Нет tool для применения уже готового анализа»; G5 в плане работ
+- **Статус:** done (решено через отдельный tool `apply_pending_analysis` — G5, коммит `c6e5112`)
+- **Связанные решения:** `crm-mcp/tools/apply_pending_analysis.py`; workflow: `link_chat_to_customer` → `apply_pending_analysis(chat_id)` → `list_pending_identity_updates(customer_id)`

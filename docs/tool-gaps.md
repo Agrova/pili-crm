@@ -77,8 +77,8 @@
 - **Сценарий:** клиент Воропаев (id=250) нужно обновить: добавить имя "Дмитрий", телефон +79165104700, Telegram @Dmitriy Voropaev. Невозможно сделать через MCP.
 - **Предложение:** добавить `update_customer(customer_id, name?, phone?, telegram_id?, email?)` tool.
 - **Зависимости:** сущность `orders_customer` уже есть в схеме — новая сущность не нужна.
-- **Статус:** open
-- **Связанные решения:** G5 в плане работ (`docs/PLAN.md`)
+- **Статус:** done
+- **Связанные решения:** G5 — реализован `crm-mcp/tools/update_customer.py`, коммит `c6e5112`
 
 ## 2026-04-30 — Нет tool для редактирования существующего заказа
 
@@ -88,8 +88,8 @@
 - **Сценарий:** заказ З-1580 создан на $64.90, но нужно добавить доставку $12.90 и учесть скидку $6.49. Невозможно отредактировать через MCP — приходится пересоздавать заказ.
 - **Предложение:** добавить `update_order(order_id, items_to_add?, items_to_remove?, price_adjustments?)` tool или хотя бы возможность добавлять новые позиции в существующий заказ.
 - **Зависимости:** сущности `orders_order`, `orders_order_item` уже есть — новая сущность не нужна.
-- **Статус:** open
-- **Связанные решения:** G5 в плане работ (`docs/PLAN.md`)
+- **Статус:** done (частично — итерация 1: items_to_add; items_to_remove и price_adjustments → IMPROVEMENTS.md, итерация 2)
+- **Связанные решения:** G5 — реализован `crm-mcp/tools/update_order.py`, коммит `c6e5112`
 
 ## 2026-04-30 — Нет tool для просмотра/обновления расчётного курса валют
 
@@ -120,3 +120,16 @@
 - **Зависимости:** требует системного доступа (shell) из MCP-сервера — не через БД. Альтернатива: отдельный shell-скрипт `scripts/check_health.sh` + alias `crm-health` в `.zshrc`.
 - **Статус:** open
 - **Связанные решения:** частично перекрывается с G8 (FastAPI launchd autostart) — если Docker и FastAPI стартуют автоматически, проблема исчезает. До реализации G8 — скрипт как workaround.
+## 2026-04-30 — Нет tool для применения уже готового анализа к клиенту после привязки чата
+
+- **Severity:** high
+- **Источник:** сценарий «link_chat_to_customer → apply накопленных анализов»
+- **Проблема:** `analysis/run.py` с флагом `--no-apply` сохраняет `structured_extract` в БД, но не создаёт identity-записи (не вызывает `apply_analysis_to_customer`). Когда оператор позже привязывает чат к клиенту через `link_chat_to_customer`, уже готовые анализы не применяются автоматически — нет ни MCP-tool, ни CLI-команды для этого.
+- **Сценарий:** chat 6485 (@vyashin86) проанализирован на PC с `--no-apply`. Чат не был привязан к клиенту Слава Яшин (id=1688). После ручной привязки через `link_chat_to_customer` identity-записи в карантин не попали — нужно вручную перезапускать анализ с `--force` или запускать кастомный Python-скрипт.
+- **Предложение:**
+  - MCP-tool `apply_pending_analysis(chat_id)` — ищет последний завершённый `analysis_chat_analysis` для чата, вызывает `apply_analysis_to_customer(force=True)`, возвращает результат (identity_quarantined, orders_created, etc.)
+  - Или расширить `link_chat_to_customer` параметром `apply_existing_analysis: bool = True` — при привязке автоматически применять последний готовый анализ если есть
+  - Также полезен флаг CLI: `python3 -m analysis.run --apply-only --chat-id-range N..N`
+- **Зависимости:** `apply_analysis_to_customer` в `app/analysis/service.py` уже реализован, `force=True` поддерживается — новая логика не нужна, только обёртка.
+- **Статус:** done
+- **Связанные решения:** G5 — реализован `crm-mcp/tools/apply_pending_analysis.py`, коммит `c6e5112`
