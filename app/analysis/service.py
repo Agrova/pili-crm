@@ -46,6 +46,7 @@ from app.analysis.models import (
     AnalysisPendingMatchingStatus,
 )
 from app.analysis.schemas import (
+    MatchedOrder,
     MatchedStructuredExtract,
     PreflightClassification,
     SkippedReason,
@@ -77,6 +78,7 @@ class AnalysisApplicationResult:
     analysis_id: int
     customer_id: int | None
     orders_created: int = 0
+    orders_filtered_historical: int = 0
     order_items_created: int = 0
     pending_items_created: int = 0
     preferences_added: int = 0
@@ -87,6 +89,20 @@ class AnalysisApplicationResult:
     identities_quarantined: int = 0
     identities_auto_applied: int = 0
     identities_kept_pending: int = 0
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _is_actionable_order(order: MatchedOrder) -> bool:
+    """Return True if the order should be materialised as a draft in orders_order.
+
+    ADR-017: orders without items are historical mentions; terminal delivery
+    statuses mean the order is already closed.
+    """
+    if not order.items:
+        return False
+    return order.status_delivery not in {"delivered", "returned"}
 
 
 # ── Recording analyzer output ───────────────────────────────────────────────
@@ -406,11 +422,15 @@ async def apply_analysis_to_customer(
             delivery_updated = True
 
     orders_created = 0
+    orders_filtered_historical = 0
     order_items_created = 0
     pending_items_created = 0
 
     if extract.orders:
         for matched_order in extract.orders:
+            if not _is_actionable_order(matched_order):
+                orders_filtered_historical += 1
+                continue
             order = await create_draft_order(
                 session, customer_id, items=[], origin="analysis"
             )
@@ -478,6 +498,7 @@ async def apply_analysis_to_customer(
         analysis_id=analysis_id,
         customer_id=customer_id,
         orders_created=orders_created,
+        orders_filtered_historical=orders_filtered_historical,
         order_items_created=order_items_created,
         pending_items_created=pending_items_created,
         preferences_added=preferences_added,

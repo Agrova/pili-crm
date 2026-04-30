@@ -107,6 +107,7 @@ async def run(
         "identities_auto_applied": result.identities_auto_applied,
         "identities_kept_pending": result.identities_kept_pending,
         "orders_created": result.orders_created,
+        "orders_filtered_historical": result.orders_filtered_historical,
         "order_items_created": result.order_items_created,
         "pending_items_created": result.pending_items_created,
         "preferences_added": result.preferences_added,
@@ -137,9 +138,10 @@ def format_text(result: dict[str, Any]) -> str:
     ip = result.get("identities_kept_pending", 0)
     oc = result.get("orders_created", 0)
     oi = result.get("order_items_created", 0)
+    ofh = result.get("orders_filtered_historical", 0)
     return (
         f"✅ Анализ чата id={result['chat_id']} применён к клиенту id={cid}.\n"
         f"   (analysis_id={aid})\n"
         f"   Идентификаторы: карантин={iq}, авто={ia}, ожидают={ip}\n"
-        f"   Заказы: создано={oc}, позиций={oi}"
+        f"   Заказы: создано={oc}, позиций={oi}, отфильтровано как история={ofh}"
     )

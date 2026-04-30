@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -286,7 +286,37 @@ async def delete_created_entities(
 
     Returns the number of rows deleted. Used by the force-rollback path in
     ``apply_analysis_to_customer`` and by housekeeping jobs.
+
+    E18 cascade fix: when deleting orders_order journal entries, the
+    underlying orders_order rows are also deleted if they are still in
+    ``draft`` status and have exactly one journal record (safety guard
+    against deleting orders the operator has touched).  ON DELETE CASCADE
+    on orders_order_item and analysis_pending_order_item handles children.
     """
+    # Cascade-delete orders_order when applicable.
+    should_cascade = entity_type is None or entity_type == "orders_order"
+    if should_cascade:
+        await session.execute(
+            text(
+                "DELETE FROM orders_order oo"
+                " WHERE oo.status IN ('draft', 'in_procurement')"
+                " AND ("
+                "   SELECT COUNT(*) FROM analysis_created_entities ace"
+                "   WHERE ace.entity_id = oo.id"
+                "     AND ace.entity_type = 'orders_order'"
+                "     AND ace.analyzer_version = :ver"
+                "     AND ace.source_chat_id = :chat_id"
+                "     AND ace.created_by = :created_by"
+                " ) = 1"
+            ),
+            {
+                "ver": analyzer_version,
+                "chat_id": source_chat_id,
+                "created_by": created_by,
+            },
+        )
+        await session.flush()
+
     stmt = delete(AnalysisCreatedEntity).where(
         AnalysisCreatedEntity.analyzer_version == analyzer_version,
         AnalysisCreatedEntity.source_chat_id == source_chat_id,
