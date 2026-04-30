@@ -41,6 +41,7 @@
 | ADR-F04 — Snapshot цен при сохранении заказа (принят 2026-04-30, G1 закрыт, CP2) | Архитектурный штаб |
 | G2 — PC-worker инфраструктура: `--chat-id-range` в `analysis/run.py` + `scripts/sync_pc_analyses.sh` + runbook (закрыто 2026-04-30, CP3) | Cowork-arch (этот чат) |
 | ADR-016 — Token economy + Mobile capture (принят 2026-04-30; G18 добавлен в PLAN.md, реализация ждёт pre-step) | Архитектурный штаб |
+| G5 — Update tools + Cowork промт v2.0: `update_customer`, `update_order`, `apply_pending_analysis` (16 tools, 17 тестов), `cowork-system-prompt.md` v2.0 с decision tree (закрыто 2026-04-30, CP8; коммиты `c6e5112`, `704980b`, `dabcf7a`) | Архитектурный штаб (этот чат) |
 
 ---
 
@@ -60,7 +61,7 @@
 |---|---|---|---|
 | G3 | Smoke на chat 6544 (Kristina) + полный full analysis на 386 чатах | Оператор + Архитектурный штаб | high (ждёт G2) |
 | G4 | Apply результатов анализа через Cowork (identity quarantine, link chats) | Cowork (operator workflow) | high (после G3) |
-| G5 | `update_customer` + `update_order` tools + обновление Cowork промта под 15 tools | Prompt Factory + Архитектурный штаб | high (оперативная боль) |
+| G5 | ✅ Закрыто 2026-04-30, CP8 — см. «Сделано» | — | — |
 | G6 | Finance ledger — реализация по ADR-F04/F06 | Prompt Factory | high (после G1) |
 | G7 | ADR-007/008 Пакет 3 (разрешение ценовых конфликтов + hooks) + ADR-005 mirror live | Prompt Factory | medium |
 | G8 | FastAPI launchd autostart (plist + runbook) | Prompt Factory | medium |

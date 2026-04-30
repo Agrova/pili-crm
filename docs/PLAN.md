@@ -1,6 +1,6 @@
 # План работ по проекту PiliStrogai CRM
 
-**Текущая версия:** v10 (2026-04-30)
+**Текущая версия:** v11 (2026-04-30)
 **Цель:** провести проект от текущего состояния (полный анализ Telegram-чатов на PC-worker, перезапуск после теплового сбоя Mac) до закрытия `01_scope.md` (включая отложенные «В планах»: Gmail ingestion, finance ledger, Telegram-бот, технический долг).
 
 ## История версий
@@ -16,6 +16,7 @@
 | v7 | 2026-04-30 ночь | G2 закрыт: `--chat-id-range`/`--chat-ids` в `analysis/run.py`, `scripts/sync_pc_analyses.sh` (обе таблицы), `docs/runbook_sync_pc_analyses.md`, регрессионные тесты. CP3 достигнут. G3 разблокирован. |
 | v8 | 2026-04-30 ночь | Принят ADR-016 (экономия токенов + мобильный capture). Добавлена группа G18 (Desktop live artifacts + Telegram capture-only бот). G14 переопределён как «полный мобильный CRM» — capture-only часть вынесена в G18. CP17 добавлен. Открытый вопрос про измерительный pre-step добавлен в `06_open_questions.md`. |
 | v9 | 2026-04-30 ночь | G18 pre-step переведён с ручного журнала на **авто-сбор операционным Cowork**: создан `docs/inbox_measurement.md`, в `cowork-system-prompt.md` добавлен раздел 11 с эвристиками. Период сбора **2026-04-30 — 2026-05-14** (две недели), дата разбора 2026-05-14. Open question по G18 переведён в `in-progress`. |
+| v11 | 2026-04-30 | G5 закрыт: `update_customer`, `update_order`, `apply_pending_analysis` реализованы (16 tools, 17 тестов), `cowork-system-prompt.md` v2.0. CP8 достигнут. G4 разблокирован. |
 | v10 | 2026-04-30 ночь | **Скелет G3 и полное инициирующее сообщение скорректированы** по факту G2-сессии: (а) деление Mac/PC отменено — все 386 чатов идут только на PC; (б) реальные chat_id 5941–6790, не 1..386; (в) preflight_classification — отдельная колонка, не поле в structured_extract; (г) smoke на chat 6485 (Вячеслав Яшин / @vyashin86), не 6544; (д) 6544 уже проанализирован (v1.4+qwen3-14b). |
 
 ## Как читать этот документ
@@ -44,9 +45,9 @@
 | **G0** | Гигиена документации | F1, F2, F3, F4 — закрыть рассинхронизации, перенести `tool-gaps`, обновить `01_scope.md` и `000_ADR_REGISTRY.md` | Cowork-arch (ручная правка) | Sonnet 4.6 + Low | Качество планирования всех остальных групп | ✅ Закрыто 2026-04-30, CP1 |
 | **G1** | Архитектурные решения финансового контура | ADR-F04 (snapshot цен) — `highest`. ADR-F06 уже принят 2026-04-30 | Cowork-arch | Opus 4.6 + High | G6 (finance ledger) | ✅ Закрыто 2026-04-30, CP2. ADR-F06 + ADR-F04 приняты |
 | **G2** | PC-worker инфраструктура (B3) | `--chat-id-range`/`--chat-ids` в `analysis/run.py` + `scripts/sync_pc_analyses.sh`. Деление 386 чатов: PC 1..193, Mac 194..386. ADR-011 Addendum 2 действует. **Реактивирован после теплового сбоя Mac** | Cowork-pf → Claude Code | Sonnet 4.6 + Medium | G3 (запуск full analysis на 386 чатах) | ✅ Закрыто 2026-04-30, CP3 |
-| **G3** | Smoke + полный full analysis на 386 чатах | Перезапустить фоновый. Smoke на chat 6544 (Kristina) с identity quarantine apply. Распределённый прогон | Hand + Cowork-operator | Cowork = Sonnet 4.6 | G4 (apply результатов) | ⏳ Ждёт G2 |
-| **G4** | Apply результатов через Cowork | review identity quarantine, link chats, apply orders. Оценить vision-template-mismatch (E4) | Cowork-operator | Sonnet 4.6 | G5 (актуальный системный промт) | ⏳ Ждёт G3 |
-| **G5** | Update tools для customer/order + Cowork промт | `update_customer`, `update_order` (оперативная боль 2026-04-30 — клиент Воропаев id=250, заказ З-1580). Затем апдейт `cowork-system-prompt.md` под 15 tools | Cowork-pf → Claude Code, потом Cowork-arch (промт) | Sonnet 4.6 + Medium / Opus 4.6 + Medium | — | 🟠 Готов к запуску |
+| **G3** | Smoke + полный full analysis на 386 чатах | Перезапустить фоновый. Smoke на chat 6544 (Kristina) с identity quarantine apply. Распределённый прогон | Hand + Cowork-operator | Cowork = Sonnet 4.6 | G5 (tools) → G4 (apply) | ⏳ Ждёт G2 |
+| **G4** | Apply результатов через Cowork | review identity quarantine, link chats, apply orders. Оценить vision-template-mismatch (E4) | Cowork-operator | Sonnet 4.6 | — | ⏳ Ждёт G5 |
+| **G5** | Update tools для customer/order + Cowork промт | `update_customer`, `update_order`, `apply_pending_analysis`, расширение `get_unreviewed_chats` (has_analysis + summary). Затем апдейт `cowork-system-prompt.md` под 16 tools | Cowork-pf → Claude Code, потом Cowork-arch (промт) | Sonnet 4.6 + Medium / Opus 4.6 + Medium | G4 (полный apply через Cowork) | ✅ Закрыто 2026-04-30, CP8 |
 | **G6** | Finance ledger | Реализация finance модуля по ADR-F04/F06. Schema-миграция, snapshot цен в order_item, хранение валюты | Cowork-pf → Claude Code (несколько подзадач) | Sonnet 4.6 + High | — | ⏳ Ждёт G1 (ADR-F04) |
 | **G7** | ADR-007/008 Пакет 3 + ADR-005 mirror live | Пакет 3 — MCP-tools для разрешения ценовых конфликтов + интеграция hooks. Также — выбор библиотеки Google Sheets API и реализация `crm-mcp/mirror/` | Cowork-pf → Claude Code (две задачи) | Sonnet 4.6 + High | — | 🟡 Готов к запуску |
 | **G8** | FastAPI launchd autostart (B4) | plist, runbook, `logs/` в `.gitignore`. `/health` endpoint уже есть | Cowork-pf → Claude Code | Sonnet 4.6 + Medium | — | 🟡 QoL, не блокер |
@@ -105,8 +106,8 @@
 | CP4 | Фоновый full analysis перезапущен и завершён | G3 ч.1 | ⏳ |
 | CP5 | Smoke на chat 6544 — identity quarantine применён | G3 ч.2 | ⏳ |
 | CP6 | Все 386 чатов прогнаны | G3 ч.3 | ⏳ |
-| CP7 | Apply через Cowork завершён | G4 | ⏳ |
-| CP8 | Update tools реализованы + Cowork промт обновлён | G5 | ⏳ |
+| CP7 | Apply через Cowork завершён (требует G5) | G4 | ⏳ |
+| CP8 | Update tools реализованы + Cowork промт обновлён (предшествует G4) | G5 | ✅ 2026-04-30 |
 | CP9 | Finance ledger в проде | G6 | ⏳ |
 | CP10 | ADR-007/008 Пакет 3 + Mirror live | G7 | ⏳ |
 | CP11 | FastAPI autostart | G8 | ⏳ |
@@ -202,13 +203,14 @@
 - **Префаза:** `crm-mcp/IMPROVEMENTS.md` запись от 2026-04-29, `docs/cowork-system-prompt.md`
 - **Модель:** Cowork = Sonnet 4.6
 - **Артефакт:** обновлённые `orders_customer`, `orders_order` (drafts), `communications_link`
+- **Зависимость:** G5 (нужны `apply_pending_analysis` + расширение `get_unreviewed_chats`)
 - **CP:** CP7
 
 ### G5 — Update tools + Cowork промт
-- **Цель:** `update_customer`, `update_order` + обновить `cowork-system-prompt.md` под 15 tools.
-- **Префаза:** `docs/tool-gaps.md` записи 2026-04-30, `crm-mcp/tools/create_*.py` (образцы)
+- **Цель:** `update_customer`, `update_order`, `apply_pending_analysis` + обновить `cowork-system-prompt.md` под 16 tools.
+- **Префаза:** `docs/tool-gaps.md` записи 2026-04-30, `crm-mcp/IMPROVEMENTS.md` запись 2026-04-30, `crm-mcp/tools/create_*.py` (образцы)
 - **Модель:** Sonnet 4.6 + Medium → Opus 4.6 + Medium
-- **Артефакт:** `crm-mcp/tools/update_*.py`, обновлённый промт
+- **Артефакт:** `crm-mcp/tools/update_*.py`, `crm-mcp/tools/apply_pending_analysis.py`, обновлённый промт
 - **CP:** CP8
 
 ### G6 — Finance ledger
@@ -429,7 +431,7 @@
 - [ ] 01_scope.md — запись в «Сделано»
 - [ ] G4 готов к запуску
 
-После CP6 запускается G4.
+После CP6 запускается G5 (реализация tools), затем G4 (apply через Cowork).
 ```
 
 ### G4 — Apply через Cowork (полное сообщение)
@@ -446,15 +448,21 @@
 
 Модель: Cowork = Sonnet 4.6
 
+Важно: G5 должна быть закрыта до G4. Нужны tools: apply_pending_analysis, расширенный get_unreviewed_chats (has_analysis + summary).
+
 Workflow:
 1. Для каждого нерешённого chat (get_unreviewed_chats(limit=50)):
+   - get_unreviewed_chats теперь показывает has_analysis + summary — видно что уже проанализировано
    - Если есть похожий клиент → link_chat_to_customer(chat_id, customer_id)
-   - Если нет → link_chat_to_customer(chat_id, action='create' или 'ignore')
-2. Для каждого linked клиента:
+   - Если нет → link_chat_to_customer(chat_id, create_new=True или ignore=True)
+2. После привязки чата → apply_pending_analysis(chat_id):
+   - Применяет уже готовый анализ к клиенту (identity → карантин, orders → draft)
+   - Если анализа нет — пропустить, чат уйдёт в следующий прогон PC
+3. Для каждого linked клиента:
    - list_pending_identity_updates(customer_id) → видеть quarantine
    - apply_identity_update(extracted_id, action='overwrite'|'reject'|'add_as_secondary')
-   - Внимание: name overwrite критичен (NOT NULL); email_unique_collision — структурированная ошибка; customer_id IS NULL → сначала link
-3. Применить orders/preferences через стандартный workflow
+   - Внимание: name overwrite критичен (NOT NULL); email_unique_collision — структурированная ошибка
+4. Применить orders/preferences через стандартный workflow
 
 Параллельно — оценка E4:
 - SELECT COUNT(*) FROM communications_telegram_message_media_extraction WHERE extraction_method = 'vision-template-mismatch' (~98)
@@ -474,34 +482,37 @@ Workflow:
 ```
 Контекст: PiliStrogai CRM. План — pili-crm/docs/PLAN.md. Запускаю G5 (две подзадачи в двух чатах).
 
-Цель: реализовать update_customer и update_order MCP-tools. Затем — обновить cowork-system-prompt.md под 15 tools (13 текущих + 2 новых).
+Цель: реализовать update_customer, update_order и apply_pending_analysis MCP-tools. Затем — обновить cowork-system-prompt.md под 16 tools (13 текущих + 3 новых).
 
 Префаза для подзадачи 1 (реализация tools):
-1. pili-crm/docs/tool-gaps.md — записи 2026-04-30 (после F1) с конкретными требованиями (клиент Воропаев id=250, заказ З-1580)
-2. pili-crm/crm-mcp/tools/create_customer.py, create_order.py — образцы стиля
-3. pili-crm/crm-mcp/tools/update_order_item_status.py — пример write-tool с derive-status интеграцией
+1. pili-crm/docs/tool-gaps.md — записи 2026-04-30 (update_customer, update_order, apply_pending_analysis)
+2. pili-crm/crm-mcp/IMPROVEMENTS.md — запись 2026-04-30 (link_chat_to_customer + apply)
+3. pili-crm/crm-mcp/tools/create_customer.py, create_order.py — образцы стиля
+4. pili-crm/crm-mcp/tools/update_order_item_status.py — пример write-tool с derive-status интеграцией
+5. pili-crm/app/analysis/service.py — apply_analysis_to_customer (уже реализован, force=True поддерживается)
 
 Модель подзадачи 1: Sonnet 4.6 + Medium
 
 Артефакты подзадачи 1:
 - crm-mcp/tools/update_customer.py: update_customer(customer_id, name?, phone?, telegram_id?, email?). Валидация: customer_id существует, telegram_id не конфликтует (структурированный ответ как в link_chat_to_customer). Email UNIQUE — savepoint как в apply_identity_update.
 - crm-mcp/tools/update_order.py: scope первой итерации — добавление позиций (items_to_add). Удаление и price_adjustments — отложить во вторую итерацию, явно зафиксировать в IMPROVEMENTS.md.
+- crm-mcp/tools/apply_pending_analysis.py: apply_pending_analysis(chat_id) — ищет последний завершённый analysis_chat_analysis для чата, вызывает apply_analysis_to_customer(force=True), возвращает identities_quarantined, orders_created и т.д. Ошибка если чат не привязан к клиенту (structured error как в apply_identity_update).
 - 6-8 тестов на edge cases.
 
 Префаза для подзадачи 2 (Cowork промт):
 1. pili-crm/docs/cowork-system-prompt.md
-2. pili-crm/crm-mcp/IMPROVEMENTS.md — operational notes для всех 15 tools
+2. pili-crm/crm-mcp/IMPROVEMENTS.md — operational notes для всех 16 tools
 
 Модель подзадачи 2: Opus 4.6 + Medium
 
 Артефакты подзадачи 2:
-- Обновлённый docs/cowork-system-prompt.md с описанием update_customer, update_order, list_pending_identity_updates, apply_identity_update
-- Decision tree: update vs create, update_order vs update_order_item_status
+- Обновлённый docs/cowork-system-prompt.md с описанием update_customer, update_order, apply_pending_analysis, list_pending_identity_updates, apply_identity_update
+- Decision tree: update vs create, update_order vs update_order_item_status, когда звать apply_pending_analysis (после link_chat_to_customer)
 
 Чек-лист закрытия:
 - [ ] Tests зелёные, ruff/mypy чисто
 - [ ] tool-gaps.md — записи 2026-04-30 переведены в done
-- [ ] Cowork промт обновлён, обкатан (smoke: создать → update → проверить)
+- [ ] Cowork промт обновлён, обкатан (smoke: link_chat → apply_pending_analysis → list_pending_identity_updates)
 - [ ] PLAN.md — G5 → ✅, CP8 достигнут, инкремент версии
 - [ ] 01_scope.md — записи в «Сделано»
 ```
