@@ -5,6 +5,7 @@ from __future__ import annotations
 from tools import (
     add_to_stock,
     apply_identity_update,
+    apply_pending_analysis,
     create_customer,
     create_order,
     find_customer,
@@ -15,6 +16,8 @@ from tools import (
     match_shipment,
     pending_orders,
     search_products,
+    update_customer,
+    update_order,
     update_order_item_status,
 )
 
@@ -32,6 +35,9 @@ TOOLS = (
     link_chat_to_customer,
     list_pending_identity_updates,
     apply_identity_update,
+    update_customer,
+    update_order,
+    apply_pending_analysis,
 )
 
 __all__ = [
@@ -49,4 +55,7 @@ __all__ = [
     "link_chat_to_customer",
     "list_pending_identity_updates",
     "apply_identity_update",
+    "update_customer",
+    "update_order",
+    "apply_pending_analysis",
 ]

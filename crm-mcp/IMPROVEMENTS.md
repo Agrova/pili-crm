@@ -161,3 +161,22 @@ Known operational notes (to watch during real use):
 - **All pre-validation errors are structured dicts**, not exceptions —
   Cowork can branch on `result["error"]` cleanly. ValueError is reserved
   for programmer bugs (wrong arg type).
+## 2026-04-30 — `update_order` (итерация 1): только items_to_add
+
+- **Severity:** medium
+- **Источник:** `update_order` / G5 первая итерация
+- **Проблема:** `update_order` поддерживает только `items_to_add`. `items_to_remove` (удаление позиций из заказа) и `price_adjustments` (корректировка цены позиции) не реализованы.
+- **Сценарий:** оператор хочет убрать позицию из заказа или изменить цену уже добавленной позиции — через MCP это невозможно.
+- **Предложение:** реализовать `items_to_remove: list[int]` (список item_id) и `price_adjustments: list[{item_id, new_price}]` в итерации 2 (G5).
+- **Статус:** open
+- **Связанные решения:** G5, вторая итерация
+
+## 2026-04-30 — `link_chat_to_customer` не применяет уже готовые анализы
+
+- **Severity:** high
+- **Источник:** `link_chat_to_customer` / сценарий G3 — привязка чата после PC-прогона
+- **Проблема:** при привязке чата к клиенту tool не проверяет, есть ли уже завершённый `analysis_chat_analysis` для этого чата. Если анализ был прогнан с `--no-apply` (стандартный режим PC-worker), identity-записи не создаются ни при анализе, ни при привязке — оператор должен вручную перезапускать анализ.
+- **Сценарий:** chat 6485 (@vyashin86) прогнан на PC (`--no-apply`), потом привязан к Слава Яшин (id=1688) через `link_chat_to_customer`. `list_pending_identity_updates(1688)` вернул пустой карантин — потому что `apply_analysis_to_customer` ни разу не вызывался. Нужен повторный запуск с `--force`.
+- **Предложение:** при успешной привязке чата проверять наличие записи в `analysis_chat_analysis` со статусом `done`. Если найдена — автоматически вызывать `apply_analysis_to_customer(force=True)` и возвращать результат в ответе tool-а (`identities_quarantined`, `orders_created`). Добавить параметр `apply_existing_analysis: bool = True` для управления поведением.
+- **Статус:** open
+- **Связанные решения:** см. `docs/tool-gaps.md` 2026-04-30 «Нет tool для применения уже готового анализа»; G5 в плане работ
