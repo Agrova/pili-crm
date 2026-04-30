@@ -180,3 +180,13 @@ Known operational notes (to watch during real use):
 - **Предложение:** при успешной привязке чата проверять наличие записи в `analysis_chat_analysis` со статусом `done`. Если найдена — автоматически вызывать `apply_analysis_to_customer(force=True)` и возвращать результат в ответе tool-а (`identities_quarantined`, `orders_created`). Добавить параметр `apply_existing_analysis: bool = True` для управления поведением.
 - **Статус:** done (решено через отдельный tool `apply_pending_analysis` — G5, коммит `c6e5112`)
 - **Связанные решения:** `crm-mcp/tools/apply_pending_analysis.py`; workflow: `link_chat_to_customer` → `apply_pending_analysis(chat_id)` → `list_pending_identity_updates(customer_id)`
+
+## 2026-04-30 — `apply_pending_analysis` создаёт пустые draft-обёртки на исторические orders из v1.4
+
+- **Severity:** high
+- **Источник:** `apply_pending_analysis` / smoke chat 6485 (@vyashin86, customer_id=1688)
+- **Проблема:** v1.4 by design реконструирует **всю историю заказов** клиента из чата (NARRATIVE_PROMPT раздел «Заказы»), включая отменённые/доставленные/возвращённые. `apply_analysis_to_customer` создаёт на каждый элемент `extract.orders` отдельный draft в `orders_order` через `create_draft_order(items=[])` (строка `service.py:414`). Если у MatchedOrder `items=None` или пусто — заказ остаётся пустой обёрткой. На chat 6485: 26 orders, у 23 пустые items. Бага в коде apply нет — есть мисматч контракта между промтом (история) и apply (новые drafts).
+- **Сценарий:** `list_draft_orders(customer_id=1688)` вернул 50 пустых draft-заказов (З-1583…З-1635+). Это два прогона (smoke G3 + повторный в G4): force=True стирает journal `analysis_created_entities`, но **не каскадирует на `orders_order`** — старые пустые draft остались, новые добавились сверху. Статистика по 4 v1.4-чатам: 36 orders, 23 пустые (63.9%). Причина пустоты: 19/23 имеют `status_delivery=unknown, status_payment=unknown` — Qwen в большинстве случаев не выводит финальные статусы для исторических заказов.
+- **Предложение:** принят **ADR-017** — фильтр `_is_actionable_order` на стороне `apply_analysis_to_customer`: заказ создаётся в БД только если `items` непустой и `status_delivery ∉ {delivered, returned}`. Параллельно — каскад в `delete_created_entities` на orders_order draft при force=True (E18 в PLAN.md). Реализация — G4.6.
+- **Статус:** done (G4.6 коммит `d73e52e`)
+- **Связанные решения:** ADR-017, G4.5 (закрыта 2026-04-30), G4.6 (закрыта 2026-04-30, `d73e52e`). 50 пустых draft Яшина удалены вручную через psql 2026-04-30. Триггер на bump промта v1.5 — `06_open_questions.md`. В выдаче появилось поле `orders_filtered_historical`.

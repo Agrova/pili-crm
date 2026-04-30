@@ -42,6 +42,9 @@
 | G2 — PC-worker инфраструктура: `--chat-id-range` в `analysis/run.py` + `scripts/sync_pc_analyses.sh` + runbook (закрыто 2026-04-30, CP3) | Cowork-arch (этот чат) |
 | ADR-016 — Token economy + Mobile capture (принят 2026-04-30; G18 добавлен в PLAN.md, реализация ждёт pre-step) | Архитектурный штаб |
 | G5 — Update tools + Cowork промт v2.0: `update_customer`, `update_order`, `apply_pending_analysis` (16 tools, 17 тестов), `cowork-system-prompt.md` v2.0 с decision tree (закрыто 2026-04-30, CP8; коммиты `c6e5112`, `704980b`, `dabcf7a`) | Архитектурный штаб (этот чат) |
+| G5.5 — Draft-order tools: `list_draft_orders`, `verify_draft_order` (18 tools, 6 тестов), `cowork-system-prompt.md` v2.1 с workflow верификации черновиков (закрыто 2026-04-30, CP8.5) | Архитектурный штаб (этот чат) |
+| G4.5 — ADR-017 принят: фильтрация исторических orders при apply (закрыто 2026-04-30, CP7.5 архитектурная часть). Smoke chat 6485: 64% orders v1.4 пустые → фильтр на стороне `apply_analysis_to_customer`. 50 пустых draft Яшина удалены вручную. Реализация — G4.6. | Cowork-arch (этот чат) |
+| G4.6 — Реализация ADR-017 + E18 cascade fix (закрыто 2026-04-30, CP7.5 ✅, коммит `d73e52e`). `_is_actionable_order` фильтр + `orders_filtered_historical` счётчик. Cascade DELETE в `delete_created_entities`: удаляет `orders_order` со статусом `draft`/`in_procurement` при force=True. 6 тестов (a-f). G4 разблокирован. | Claude Code |
 
 ---
 
@@ -62,6 +65,7 @@
 | G3 | Smoke на chat 6544 (Kristina) + полный full analysis на 386 чатах | Оператор + Архитектурный штаб | high (ждёт G2) |
 | G4 | Apply результатов анализа через Cowork (identity quarantine, link chats) | Cowork (operator workflow) | high (после G3) |
 | G5 | ✅ Закрыто 2026-04-30, CP8 — см. «Сделано» | — | — |
+| G5.5 | ✅ Закрыто 2026-04-30, CP8.5 — см. «Сделано» | — | — |
 | G6 | Finance ledger — реализация по ADR-F04/F06 | Prompt Factory | high (после G1) |
 | G7 | ADR-007/008 Пакет 3 (разрешение ценовых конфликтов + hooks) + ADR-005 mirror live | Prompt Factory | medium |
 | G8 | FastAPI launchd autostart (plist + runbook) | Prompt Factory | medium |

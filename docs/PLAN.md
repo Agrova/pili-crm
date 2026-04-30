@@ -1,6 +1,6 @@
 # План работ по проекту PiliStrogai CRM
 
-**Текущая версия:** v11 (2026-04-30)
+**Текущая версия:** v15 (2026-04-30)
 **Цель:** провести проект от текущего состояния (полный анализ Telegram-чатов на PC-worker, перезапуск после теплового сбоя Mac) до закрытия `01_scope.md` (включая отложенные «В планах»: Gmail ingestion, finance ledger, Telegram-бот, технический долг).
 
 ## История версий
@@ -16,6 +16,10 @@
 | v7 | 2026-04-30 ночь | G2 закрыт: `--chat-id-range`/`--chat-ids` в `analysis/run.py`, `scripts/sync_pc_analyses.sh` (обе таблицы), `docs/runbook_sync_pc_analyses.md`, регрессионные тесты. CP3 достигнут. G3 разблокирован. |
 | v8 | 2026-04-30 ночь | Принят ADR-016 (экономия токенов + мобильный capture). Добавлена группа G18 (Desktop live artifacts + Telegram capture-only бот). G14 переопределён как «полный мобильный CRM» — capture-only часть вынесена в G18. CP17 добавлен. Открытый вопрос про измерительный pre-step добавлен в `06_open_questions.md`. |
 | v9 | 2026-04-30 ночь | G18 pre-step переведён с ручного журнала на **авто-сбор операционным Cowork**: создан `docs/inbox_measurement.md`, в `cowork-system-prompt.md` добавлен раздел 11 с эвристиками. Период сбора **2026-04-30 — 2026-05-14** (две недели), дата разбора 2026-05-14. Open question по G18 переведён в `in-progress`. |
+| v15 | 2026-04-30 | **G4.6 закрыта** — ADR-017 реализован: `_is_actionable_order` фильтр в `apply_analysis_to_customer` (items непустой + status_delivery ∉ {delivered, returned}). Cascade fix E18: `delete_created_entities` удаляет `orders_order` со статусом `draft`/`in_procurement` при force=True. Добавлен счётчик `orders_filtered_historical`. 6 новых тестов (a-f). CP7.5 ✅. G4 разблокирован. Коммит `d73e52e`. |
+| v14 | 2026-04-30 | **G4.5 закрыта** — принят ADR-017 (фильтрация исторических orders при apply). Smoke chat 6485 показал: v1.4 by design реконструирует историю заказов, apply трактует это как новые draft → ~64% orders создаются пустыми. Решение: фильтр на стороне `apply_analysis_to_customer` (items непустой + status_delivery ∉ {delivered, returned}). Альтернатива (bump промта v1.5) отложена до триггера. **G4.6 открыта** — реализация фильтра + cascade fix для force=True (E18). G4 → ⏸️ ждёт G4.6. CP7.5 добавлен. 50 пустых draft Яшина (customer_id=1688) удалены вручную через psql. |
+| v13 | 2026-04-30 | G5.5 закрыта: `list_draft_orders` + `verify_draft_order` реализованы (18 tools, 6 тестов), `cowork-system-prompt.md` v2.1. CP8.5 достигнут. G4 разблокирован. |
+| v12 | 2026-04-30 | G5.5 добавлена: `list_draft_orders` + `verify_draft_order`. Smoke chat 6485 выявил что draft-заказы из анализа недоступны оператору в Cowork. G4 теперь ждёт G5.5. CP8.5 добавлен. `crm-mcp/db.py` получил импорт всех ORM-моделей (фикс NoReferencedTableError). |
 | v11 | 2026-04-30 | G5 закрыт: `update_customer`, `update_order`, `apply_pending_analysis` реализованы (16 tools, 17 тестов), `cowork-system-prompt.md` v2.0. CP8 достигнут. G4 разблокирован. |
 | v10 | 2026-04-30 ночь | **Скелет G3 и полное инициирующее сообщение скорректированы** по факту G2-сессии: (а) деление Mac/PC отменено — все 386 чатов идут только на PC; (б) реальные chat_id 5941–6790, не 1..386; (в) preflight_classification — отдельная колонка, не поле в structured_extract; (г) smoke на chat 6485 (Вячеслав Яшин / @vyashin86), не 6544; (д) 6544 уже проанализирован (v1.4+qwen3-14b). |
 
@@ -46,8 +50,11 @@
 | **G1** | Архитектурные решения финансового контура | ADR-F04 (snapshot цен) — `highest`. ADR-F06 уже принят 2026-04-30 | Cowork-arch | Opus 4.6 + High | G6 (finance ledger) | ✅ Закрыто 2026-04-30, CP2. ADR-F06 + ADR-F04 приняты |
 | **G2** | PC-worker инфраструктура (B3) | `--chat-id-range`/`--chat-ids` в `analysis/run.py` + `scripts/sync_pc_analyses.sh`. Деление 386 чатов: PC 1..193, Mac 194..386. ADR-011 Addendum 2 действует. **Реактивирован после теплового сбоя Mac** | Cowork-pf → Claude Code | Sonnet 4.6 + Medium | G3 (запуск full analysis на 386 чатах) | ✅ Закрыто 2026-04-30, CP3 |
 | **G3** | Smoke + полный full analysis на 386 чатах | Перезапустить фоновый. Smoke на chat 6544 (Kristina) с identity quarantine apply. Распределённый прогон | Hand + Cowork-operator | Cowork = Sonnet 4.6 | G5 (tools) → G4 (apply) | ⏳ Ждёт G2 |
-| **G4** | Apply результатов через Cowork | review identity quarantine, link chats, apply orders. Оценить vision-template-mismatch (E4) | Cowork-operator | Sonnet 4.6 | — | ⏳ Ждёт G5 |
+| **G4** | Apply результатов через Cowork | review identity quarantine, link chats, apply orders. Оценить vision-template-mismatch (E4) | Cowork-operator | Sonnet 4.6 | — | 🟢 Разблокирован (G4.6 ✅ 2026-04-30) |
+| **G4.5** | Архитектурное решение: orders из анализа = drafts vs history | ADR-017: фильтрация исторических orders на стороне `apply_analysis_to_customer`. Выявлено в smoke chat 6485: 26 orders из v1.4 → 50 пустых draft в БД | Cowork-arch (этот чат, 2026-04-30) | Opus 4.6 + Medium | G4.6, G3 part 2 (массовый apply) | ✅ Закрыто 2026-04-30, CP7.5 (архитектурная часть) |
+| **G4.6** | Реализация ADR-017 + cascade fix для force=True | Фильтр `_is_actionable_order` в `apply_analysis_to_customer` (отсекает items=пусто и status_delivery ∈ {delivered, returned}). Параллельно — каскад в `delete_created_entities` на orders_order WHERE id IN (...) AND status IN (draft, in_procurement) (E18) | Claude Code | Sonnet 4.6 + Medium | G4, G3 part 2 (массовый apply) | ✅ Закрыто 2026-04-30, CP7.5, коммит `d73e52e` |
 | **G5** | Update tools для customer/order + Cowork промт | `update_customer`, `update_order`, `apply_pending_analysis`, расширение `get_unreviewed_chats` (has_analysis + summary). Затем апдейт `cowork-system-prompt.md` под 16 tools | Cowork-pf → Claude Code, потом Cowork-arch (промт) | Sonnet 4.6 + Medium / Opus 4.6 + Medium | G4 (полный apply через Cowork) | ✅ Закрыто 2026-04-30, CP8 |
+| **G5.5** | Draft-заказы из анализа: list + verify | `list_draft_orders`, `verify_draft_order`. Выявлено в smoke chat 6485: apply_pending_analysis создаёт 26 draft-заказов, оператор не может их увидеть через Cowork | Cowork-pf → Claude Code | Sonnet 4.6 + Low | G4 (верификация черновиков) | ✅ Закрыто 2026-04-30, CP8.5 |
 | **G6** | Finance ledger | Реализация finance модуля по ADR-F04/F06. Schema-миграция, snapshot цен в order_item, хранение валюты | Cowork-pf → Claude Code (несколько подзадач) | Sonnet 4.6 + High | — | ⏳ Ждёт G1 (ADR-F04) |
 | **G7** | ADR-007/008 Пакет 3 + ADR-005 mirror live | Пакет 3 — MCP-tools для разрешения ценовых конфликтов + интеграция hooks. Также — выбор библиотеки Google Sheets API и реализация `crm-mcp/mirror/` | Cowork-pf → Claude Code (две задачи) | Sonnet 4.6 + High | — | 🟡 Готов к запуску |
 | **G8** | FastAPI launchd autostart (B4) | plist, runbook, `logs/` в `.gitignore`. `/health` endpoint уже есть | Cowork-pf → Claude Code | Sonnet 4.6 + Medium | — | 🟡 QoL, не блокер |
@@ -106,8 +113,10 @@
 | CP4 | Фоновый full analysis перезапущен и завершён | G3 ч.1 | ⏳ |
 | CP5 | Smoke на chat 6544 — identity quarantine применён | G3 ч.2 | ⏳ |
 | CP6 | Все 386 чатов прогнаны | G3 ч.3 | ⏳ |
-| CP7 | Apply через Cowork завершён (требует G5) | G4 | ⏳ |
+| CP7 | Apply через Cowork завершён (требует G5, G4.6) | G4 | ⏳ |
+| CP7.5 | ADR-017 принят, фильтр исторических orders в проде | G4.5 + G4.6 | ✅ G4.5 ✅ 2026-04-30, G4.6 ✅ 2026-04-30 (`d73e52e`) |
 | CP8 | Update tools реализованы + Cowork промт обновлён (предшествует G4) | G5 | ✅ 2026-04-30 |
+| CP8.5 | Draft-заказы видны и верифицируются в Cowork | G5.5 | ✅ 2026-04-30 |
 | CP9 | Finance ledger в проде | G6 | ⏳ |
 | CP10 | ADR-007/008 Пакет 3 + Mirror live | G7 | ⏳ |
 | CP11 | FastAPI autostart | G8 | ⏳ |
@@ -145,6 +154,7 @@
 | E15 | ADR-006: side-effects на смену статуса | Первое бизнес-требование на side-effect | 💤 |
 | E16 | ADR-010: кириллица в имени plist | G9 (Задание 3 ADR-010) | 💤 |
 | E17 | Защитное кодирование PL/pgSQL CASE | Следующая PL/pgSQL-функция | 💤 |
+| E18 | `force=True` в `delete_created_entities` не каскадирует на `orders_order` — пустые draft остаются после reapply | **Решено в G4.6** — cascade DELETE в `delete_created_entities` удаляет `orders_order` со статусом `draft`/`in_procurement`. ON DELETE CASCADE на `orders_order_item` и `analysis_pending_order_item` убирает дочерние строки. Коммит `d73e52e`. | ✅ Решён |
 
 ---
 
@@ -200,11 +210,22 @@
 
 ### G4 — Apply через Cowork
 - **Цель:** identity quarantine review + link chats + apply orders. Параллельно оценить E4.
-- **Префаза:** `crm-mcp/IMPROVEMENTS.md` запись от 2026-04-29, `docs/cowork-system-prompt.md`
+- **Префаза:** `crm-mcp/IMPROVEMENTS.md` запись от 2026-04-29, `docs/cowork-system-prompt.md`, `docs/adr/ADR-017-filter-historical-orders-on-apply.md`
 - **Модель:** Cowork = Sonnet 4.6
-- **Артефакт:** обновлённые `orders_customer`, `orders_order` (drafts), `communications_link`
-- **Зависимость:** G5 (нужны `apply_pending_analysis` + расширение `get_unreviewed_chats`)
+- **Артефакт:** обновлённые `orders_customer`, `orders_order` (drafts с реальными items), `communications_link`
+- **Зависимость:** G5 ✅, G4.6 ✅
+- **Статус:** 🟢 Готов к запуску
 - **CP:** CP7
+
+### G4.5 — ADR-017: фильтрация исторических orders ✅ ЗАКРЫТО
+Закрыто 2026-04-30. Принят `docs/adr/ADR-017-filter-historical-orders-on-apply.md`. Решение принято в Cowork-arch чате на основе smoke chat 6485 + статистики 4 v1.4-чатов (63.9% orders без items). Реализация — G4.6.
+
+### G4.6 — Реализация ADR-017 + cascade fix для force=True
+✅ Закрыто 2026-04-30. Коммит `d73e52e`.
+- **Цель:** реализовать `_is_actionable_order` фильтр в `apply_analysis_to_customer`. Параллельно — каскад на `orders_order` при `force=True` (E18).
+- **Артефакт:** `app/analysis/service.py` (фильтр + `orders_filtered_historical`), `app/analysis/repository.py` (cascade DELETE `draft`/`in_procurement`), `crm-mcp/tools/apply_pending_analysis.py` (счётчик в выдаче), `tests/analysis/test_apply_filter.py` (6 тестов a-f)
+- **Что сделано:** фильтр `_is_actionable_order` отсекает orders без items и с terminal delivery status. Cascade fix: при `force=True` `delete_created_entities` сначала удаляет `orders_order` (status `draft`/`in_procurement`, COUNT journal = 1), ON DELETE CASCADE убирает дочерние строки. Дополнительный статус `in_procurement` потребовался — `add_order_item` автоматически меняет статус с `draft` через trigg. E18 закрыт.
+- **CP:** CP7.5
 
 ### G5 — Update tools + Cowork промт
 - **Цель:** `update_customer`, `update_order`, `apply_pending_analysis` + обновить `cowork-system-prompt.md` под 16 tools.
@@ -212,6 +233,14 @@
 - **Модель:** Sonnet 4.6 + Medium → Opus 4.6 + Medium
 - **Артефакт:** `crm-mcp/tools/update_*.py`, `crm-mcp/tools/apply_pending_analysis.py`, обновлённый промт
 - **CP:** CP8
+
+### G5.5 — Draft-заказы: list + verify
+- **Цель:** `list_draft_orders`, `verify_draft_order` — оператор видит и верифицирует черновики из анализа в Cowork.
+- **Префаза:** `docs/tool-gaps.md` запись 2026-04-30 (draft-заказы), `app/orders/models.py` (статус draft), `crm-mcp/tools/apply_pending_analysis.py` (образец)
+- **Модель:** Sonnet 4.6 + Low
+- **Артефакт:** `crm-mcp/tools/list_draft_orders.py`, `crm-mcp/tools/verify_draft_order.py`, обновлённый `cowork-system-prompt.md`
+- **Зависимость:** G5 (закрыта)
+- **CP:** CP8.5
 
 ### G6 — Finance ledger
 - **Цель:** модуль `app/finance/` по принятым ADR-F04 + ADR-F06. Schema-миграция, snapshot цен, хранение валюты, MCP-tools.
@@ -443,26 +472,35 @@
 
 Префаза:
 1. pili-crm/docs/cowork-system-prompt.md
-2. pili-crm/crm-mcp/IMPROVEMENTS.md — operational notes для всех 13 tools
+2. pili-crm/crm-mcp/IMPROVEMENTS.md — operational notes для всех 16 tools (после G5)
 3. pili-crm/docs/PLAN.md — спящий риск E4
 
 Модель: Cowork = Sonnet 4.6
 
-Важно: G5 должна быть закрыта до G4. Нужны tools: apply_pending_analysis, расширенный get_unreviewed_chats (has_analysis + summary).
+Важно: G5 закрыта. Доступны tools: apply_pending_analysis, расширенный get_unreviewed_chats (has_analysis + summary), update_customer, update_order.
+
+Известные чаты для smoke-проверки в первую очередь:
+- chat 6485 (@vyashin86) → клиент Слава Яшин (id=1688). Чат уже привязан (2026-04-30).
+  Анализ прогнан с --no-apply → apply_pending_analysis(6485) создаст identity в карантин.
+  Проверить: имя «Вячеслав» vs «Слава», телефон, прочие контакты.
+- chat 6544 (Kristina) → уже проанализирован в v1.4+qwen3-14b ранее.
+  Проверить list_pending_identity_updates — применить или отклонить записи.
+  Внимание: name overwrite заменит placeholder-имя реальным — подтвердить явно.
 
 Workflow:
-1. Для каждого нерешённого chat (get_unreviewed_chats(limit=50)):
-   - get_unreviewed_chats теперь показывает has_analysis + summary — видно что уже проанализировано
+1. Smoke на известные чаты (6485, 6544) — убедиться что pipeline работает end-to-end
+2. Для каждого нерешённого chat (get_unreviewed_chats(limit=50)):
+   - get_unreviewed_chats показывает has_analysis + summary — видно что уже проанализировано
    - Если есть похожий клиент → link_chat_to_customer(chat_id, customer_id)
    - Если нет → link_chat_to_customer(chat_id, create_new=True или ignore=True)
-2. После привязки чата → apply_pending_analysis(chat_id):
+3. После привязки чата → apply_pending_analysis(chat_id):
    - Применяет уже готовый анализ к клиенту (identity → карантин, orders → draft)
    - Если анализа нет — пропустить, чат уйдёт в следующий прогон PC
-3. Для каждого linked клиента:
+4. Для каждого linked клиента:
    - list_pending_identity_updates(customer_id) → видеть quarantine
    - apply_identity_update(extracted_id, action='overwrite'|'reject'|'add_as_secondary')
    - Внимание: name overwrite критичен (NOT NULL); email_unique_collision — структурированная ошибка
-4. Применить orders/preferences через стандартный workflow
+5. Применить orders/preferences через стандартный workflow
 
 Параллельно — оценка E4:
 - SELECT COUNT(*) FROM communications_telegram_message_media_extraction WHERE extraction_method = 'vision-template-mismatch' (~98)
@@ -515,6 +553,47 @@ Workflow:
 - [ ] Cowork промт обновлён, обкатан (smoke: link_chat → apply_pending_analysis → list_pending_identity_updates)
 - [ ] PLAN.md — G5 → ✅, CP8 достигнут, инкремент версии
 - [ ] 01_scope.md — записи в «Сделано»
+```
+
+### G5.5 — Draft-заказы (полное сообщение)
+
+```
+Контекст: PiliStrogai CRM. План — pili-crm/docs/PLAN.md. Запускаю G5.5.
+
+Цель: реализовать два MCP-tool для работы с draft-заказами из анализа.
+Выявлено в smoke chat 6485: apply_pending_analysis создал 26 draft-заказов,
+но оператор не может их увидеть через Cowork — pending_orders фильтрует только confirmed+.
+
+Префаза:
+1. pili-crm/docs/tool-gaps.md — запись 2026-04-30 (draft-заказы)
+2. pili-crm/app/orders/models.py — enum OrderStatus (draft есть), структура OrderItem
+3. pili-crm/crm-mcp/tools/apply_pending_analysis.py — образец стиля tool-а
+4. pili-crm/crm-mcp/tools/pending_orders.py — образец format_text для заказов
+
+Модель: Sonnet 4.6 + Low
+
+Артефакты:
+- crm-mcp/tools/list_draft_orders.py:
+    list_draft_orders(customer_id?) — заказы со status=draft, с позициями.
+    Фильтр по клиенту опциональный. Read-only, без подтверждения.
+    Показывать: order_id, display_id (З-XXX), customer_name, created_at, позиции (название, цена, кол-во).
+- crm-mcp/tools/verify_draft_order.py:
+    verify_draft_order(order_id, action: "confirm"|"reject") — confirm переводит в status=confirmed,
+    reject удаляет заказ и позиции. Требует подтверждения оператора (write-tool).
+- Обновить cowork-system-prompt.md: добавить оба tool-а, описать workflow верификации.
+- 4-6 тестов на edge cases (нет draft-заказов, неверный order_id, повторный confirm).
+
+Критерий готовности (CP8.5):
+- list_draft_orders возвращает черновики клиента Слава Яшин (id=1688) — ~26 заказов
+- verify_draft_order confirm/reject работает корректно
+- Tests зелёные, ruff/mypy чисто
+
+Чек-лист закрытия:
+- [ ] Tests зелёные, ruff/mypy чисто
+- [ ] tool-gaps.md — запись draft-заказы → done
+- [ ] cowork-system-prompt.md обновлён
+- [ ] PLAN.md — G5.5 → ✅, CP8.5 достигнут, инкремент версии
+- [ ] 01_scope.md — запись в «Сделано»
 ```
 
 ### G7 — ADR-007/008 Пакет 3 + Mirror live (полное сообщение)
