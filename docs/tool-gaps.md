@@ -133,3 +133,29 @@
 - **Зависимости:** `apply_analysis_to_customer` в `app/analysis/service.py` уже реализован, `force=True` поддерживается — новая логика не нужна, только обёртка.
 - **Статус:** done
 - **Связанные решения:** G5 — реализован `crm-mcp/tools/apply_pending_analysis.py`, коммит `c6e5112`
+
+## 2026-04-30 — Нет tool для просмотра и верификации draft-заказов из анализа
+
+- **Severity:** high
+- **Источник:** сценарий G4 — верификация результатов apply_pending_analysis
+- **Проблема:** `apply_pending_analysis` создаёт заказы со статусом `draft` (origin=analysis). `pending_orders` их не показывает — фильтрует только `confirmed` и выше. Оператор не может увидеть, верифицировать или отклонить черновики через Cowork.
+- **Сценарий:** chat 6485 (Слава Яшин) — apply_pending_analysis создал 26 draft-заказов. `pending_orders` показал только 2 активных. 26 черновиков недоступны оператору.
+- **Предложение:**
+  - `list_draft_orders(customer_id?)` — список заказов со статусом `draft` и origin=analysis, с позициями. Фильтр по клиенту опциональный.
+  - `verify_draft_order(order_id, action: confirm|reject)` — перевести черновик в `confirmed` или удалить как false-positive.
+- **Зависимости:** таблицы `orders_order`, `orders_order_item` уже есть — новая сущность не нужна. Нужно убедиться что поле `origin` или аналог есть в схеме.
+- **Статус:** done
+- **Связанные решения:** G5.5 — реализованы `crm-mcp/tools/list_draft_orders.py` и `crm-mcp/tools/verify_draft_order.py`, `cowork-system-prompt.md` v2.1, 6 тестов в `tests/crm_mcp/test_draft_orders.py`. Закрыто 2026-04-30, CP8.5.
+
+## 2026-04-30 — Нет tool для просмотра narrative + истории клиента из анализа
+
+- **Severity:** medium
+- **Источник:** ADR-017 — фильтр исторических orders убирает их из `orders_order`, но они остаются в `analysis_chat_analysis.structured_extract` как ценный read-only контекст
+- **Проблема:** narrative_markdown и `extract.orders` (включая отфильтрованные исторические) не доступны оператору через Cowork. После ADR-017 это становится особенно заметно: оператор знает, что фильтр срезал ~64% orders, но не может посмотреть, что именно было срезано — для оценки качества фильтра и для общего контекста по клиенту.
+- **Сценарий:** оператор работает с клиентом Слава Яшин (id=1688). Видит 1-2 актуальных draft из G4.6, хочет посмотреть «а что вообще LLM узнал про этого клиента из переписки» — narrative с разделами «Клиент / История / Предпочтения / Доставка / Заказы». Сейчас доступа нет.
+- **Предложение:**
+  - `get_customer_history(customer_id, chat_id?)` — возвращает narrative_markdown последнего analysis + полный `structured_extract.orders` (включая отфильтрованные) с пометкой какие применены/отфильтрованы. Если `chat_id` не указан — собирает по всем привязанным чатам клиента.
+  - Альтернатива (компактнее): `get_chat_narrative(chat_id)` — только narrative + summary structured_extract одного чата.
+- **Зависимости:** таблица `analysis_chat_analysis` уже есть (ADR-011). Связь chat ↔ customer через `communications_link` (ADR-011 addendum-1).
+- **Статус:** open
+- **Связанные решения:** ADR-017 (увеличивает важность tool), G4.6 (триггер на bump v1.5 — `06_open_questions.md` от 2026-04-30 — для оценки нужны narrative + extract).

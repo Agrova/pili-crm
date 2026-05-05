@@ -1,6 +1,6 @@
 # План работ по проекту PiliStrogai CRM
 
-**Текущая версия:** v15 (2026-04-30)
+**Текущая версия:** v16 (2026-05-05)
 **Цель:** провести проект от текущего состояния (полный анализ Telegram-чатов на PC-worker, перезапуск после теплового сбоя Mac) до закрытия `01_scope.md` (включая отложенные «В планах»: Gmail ingestion, finance ledger, Telegram-бот, технический долг).
 
 ## История версий
@@ -16,6 +16,7 @@
 | v7 | 2026-04-30 ночь | G2 закрыт: `--chat-id-range`/`--chat-ids` в `analysis/run.py`, `scripts/sync_pc_analyses.sh` (обе таблицы), `docs/runbook_sync_pc_analyses.md`, регрессионные тесты. CP3 достигнут. G3 разблокирован. |
 | v8 | 2026-04-30 ночь | Принят ADR-016 (экономия токенов + мобильный capture). Добавлена группа G18 (Desktop live artifacts + Telegram capture-only бот). G14 переопределён как «полный мобильный CRM» — capture-only часть вынесена в G18. CP17 добавлен. Открытый вопрос про измерительный pre-step добавлен в `06_open_questions.md`. |
 | v9 | 2026-04-30 ночь | G18 pre-step переведён с ручного журнала на **авто-сбор операционным Cowork**: создан `docs/inbox_measurement.md`, в `cowork-system-prompt.md` добавлен раздел 11 с эвристиками. Период сбора **2026-04-30 — 2026-05-14** (две недели), дата разбора 2026-05-14. Open question по G18 переведён в `in-progress`. |
+| v16 | 2026-05-05 | **Починка загрузки промта операционного Cowork.** Обнаружено к 2026-05-05: журнал `docs/inbox_measurement.md` пуст, хотя операционный Cowork активно работал между v9 и v15 (G3/G4/G5/G4.5/G4.6 закрыты, инструменты 16→18→19+ выросли). Корень: `pili-crm/CLAUDE.md` не указывал Cowork читать `docs/cowork-system-prompt.md`, поэтому раздел 11 промта не доходил. Починено: (а) добавлена секция «Системный промт операционного Cowork» в `pili-crm/CLAUDE.md`; (б) создан fallback `Documents/Claude/Projects/ПилиСтрогай/CLAUDE.md`; (в) период сбора G18 pre-step пересмотрен на **2026-05-05 — 2026-05-19**, разбор 2026-05-19; (г) одношаговая проверка загрузки промта добавлена в open question. **Важный системный урок:** обновления `cowork-system-prompt.md` в репо не доходят до Cowork без указателя в CLAUDE.md — этот недосмотр был активен с момента написания промта. |
 | v15 | 2026-04-30 | **G4.6 закрыта** — ADR-017 реализован: `_is_actionable_order` фильтр в `apply_analysis_to_customer` (items непустой + status_delivery ∉ {delivered, returned}). Cascade fix E18: `delete_created_entities` удаляет `orders_order` со статусом `draft`/`in_procurement` при force=True. Добавлен счётчик `orders_filtered_historical`. 6 новых тестов (a-f). CP7.5 ✅. G4 разблокирован. Коммит `d73e52e`. |
 | v14 | 2026-04-30 | **G4.5 закрыта** — принят ADR-017 (фильтрация исторических orders при apply). Smoke chat 6485 показал: v1.4 by design реконструирует историю заказов, apply трактует это как новые draft → ~64% orders создаются пустыми. Решение: фильтр на стороне `apply_analysis_to_customer` (items непустой + status_delivery ∉ {delivered, returned}). Альтернатива (bump промта v1.5) отложена до триггера. **G4.6 открыта** — реализация фильтра + cascade fix для force=True (E18). G4 → ⏸️ ждёт G4.6. CP7.5 добавлен. 50 пустых draft Яшина (customer_id=1688) удалены вручную через psql. |
 | v13 | 2026-04-30 | G5.5 закрыта: `list_draft_orders` + `verify_draft_order` реализованы (18 tools, 6 тестов), `cowork-system-prompt.md` v2.1. CP8.5 достигнут. G4 разблокирован. |
@@ -67,7 +68,7 @@
 | **G15** | ADR-008 addendum: процентный порог цен (D4) | Для дорогих позиций (>50 000 RUB) `rounding_step=100` даёт 0.2% → ложные конфликты | Cowork-arch | Opus 4.6 + Medium | — | 💤 По триггеру |
 | **G16** | Спящие риски — точечная активация по триггерам | E1–E17 | По месту (Cowork-arch / Cowork-pf) | По месту | — | 💤 По триггерам |
 | **G17** | MCP-tools для курса валют | `get_current_exchange_rate`, `set_exchange_rate`. Найдено при разборе `pricing-context.md` (ПилиСтрогай). Курс архитектурно в `pricing_exchange_rate` (ADR-003), но нет tools для его просмотра/обновления через Cowork | Cowork-pf → Claude Code | Sonnet 4.6 + Medium | — (можно объединить с G6 finance) | 🟡 Готов к запуску |
-| **G18** | ADR-016: Token economy + Mobile capture | Две подзадачи: **G18.1** Cowork live artifacts (3 desktop-дашборда: pending_orders, customer_lookup, pricing_reference) для рутины без рассуждений. **G18.2** Telegram capture-only бот + таблица `inbox_capture` + 2 MCP-tool. Pre-step: 2 недели авто-сбора через Cowork в `docs/inbox_measurement.md` (см. `06_open_questions.md`) | Cowork-pf → Claude Code (две подзадачи) | Sonnet 4.6 + Medium (обе) | — (G18.1 использует G17 для pricing_reference) | 🟠 Pre-step idёт (2026-04-30 — 2026-05-14), разбор 2026-05-14 |
+| **G18** | ADR-016: Token economy + Mobile capture | Две подзадачи: **G18.1** Cowork live artifacts (3 desktop-дашборда: pending_orders, customer_lookup, pricing_reference) для рутины без рассуждений. **G18.2** Telegram capture-only бот + таблица `inbox_capture` + 2 MCP-tool. Pre-step: 2 недели авто-сбора через Cowork в `docs/inbox_measurement.md` (см. `06_open_questions.md`) | Cowork-pf → Claude Code (две подзадачи) | Sonnet 4.6 + Medium (обе) | — (G18.1 использует G17 для pricing_reference) | 🟠 Pre-step идёт (2026-05-05 — 2026-05-19, перезапуск после починки промта), разбор 2026-05-19 |
 
 ---
 
@@ -99,7 +100,7 @@
 - **G0 закрыт 2026-04-30** — гигиена документации (F1-F4), CP1 достигнут
 - **G2 закрыт 2026-04-30** — `--chat-id-range` + `scripts/sync_pc_analyses.sh` + runbook + тесты, CP3 достигнут
 - **ADR-016 принят 2026-04-30** — экономия токенов на рутине + мобильный capture. G18 добавлен в карту групп.
-- **G18 pre-step запущен 2026-04-30** — авто-сбор операционным Cowork в `docs/inbox_measurement.md`, период 2026-04-30 — 2026-05-14, разбор 2026-05-14 (см. `06_open_questions.md`)
+- **G18 pre-step запущен 2026-04-30, перезапущен 2026-05-05 после починки** — авто-сбор операционным Cowork в `docs/inbox_measurement.md`, период 2026-05-05 — 2026-05-19, разбор 2026-05-19 (см. `06_open_questions.md`). Корень изначальной поломки — отсутствие указателя в `pili-crm/CLAUDE.md`.
 
 ---
 
@@ -315,7 +316,7 @@
 
 ### G18 — Token economy + Mobile capture (ADR-016)
 - **Цель:** реализовать ADR-016 двумя независимыми подзадачами: G18.1 — три Cowork live artifact (pending_orders_dashboard, customer_lookup, pricing_reference); G18.2 — Telegram capture-only бот, таблица `inbox_capture`, два MCP-tool (`list_inbox_captures`, `mark_inbox_capture`), launchd plist.
-- **Pre-step:** 2 недели авто-сбора через операционный Cowork в `docs/inbox_measurement.md` (период 2026-04-30 — 2026-05-14, эвристики в `cowork-system-prompt.md` раздел 11). Разбор 2026-05-14 в отдельном Cowork-arch чате. Без pre-step можем построить дашборд для несуществующей боли.
+- **Pre-step:** 2 недели авто-сбора через операционный Cowork в `docs/inbox_measurement.md` (период 2026-05-05 — 2026-05-19, эвристики в `cowork-system-prompt.md` раздел 11, загрузка промта через `pili-crm/CLAUDE.md`). Разбор 2026-05-19 в отдельном Cowork-arch чате. Без pre-step можем построить дашборд для несуществующей боли.
 - **Префаза:** `docs/adr/ADR-016-token-economy-and-mobile-capture.md` (полный текст, особенно разделы «Что должен сделать Claude Code» и «Что проверить вручную»); `docs/cowork-system-prompt.md` (для русских меток и Telegram deep links — артефакты должны им соответствовать); `ingestion/tg_import.py` (паттерн для Telethon в G18.2); `crm-mcp/tools/get_unreviewed_chats.py` + `link_chat_to_customer.py` (паттерн для двух новых tools).
 - **Модель:** Sonnet 4.6 + Medium для обеих подзадач. Реализация по принятому ADR.
 - **Артефакты:** `crm-mcp/artifacts/*.html` (3 файла), миграция Alembic для `inbox_capture`, `app/inbox/` модуль, `crm-mcp/tools/list_inbox_captures.py` + `mark_inbox_capture.py`, `ingestion/inbox_bot.py`, `~/Library/LaunchAgents/com.pilistrogai.inbox-bot.plist`, `docs/runbook_inbox_bot.md`, `docs/runbook_artifacts.md`. Обновление `docs/cowork-system-prompt.md` (раздел «Артефакты» и два новых tools).
