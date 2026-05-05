@@ -142,7 +142,8 @@ class LMStudioClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
-            "chat_template_kwargs": {"enable_thinking": False},
+            # chat_template_kwargs removed: newer LM Studio builds return 400
+            # on unknown fields; /no_think suffix in user messages is sufficient.
         }
         if response_format is not None:
             payload["response_format"] = response_format
