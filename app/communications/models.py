@@ -21,7 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.shared.base_model import Base, TimestampMixin
+from app.shared.base_model import Base, ImmutableMixin, TimestampMixin
 
 TELEGRAM_ACCOUNT_PHONE_E164_REGEX = r"^\+[1-9]\d{7,14}$"
 
@@ -230,7 +230,7 @@ class CommunicationsTelegramMessage(Base, TimestampMixin):
     )
 
 
-class CommunicationsTelegramMessageMedia(Base):
+class CommunicationsTelegramMessageMedia(Base, ImmutableMixin):
     """Append-only media metadata for Telegram messages (ADR-015).
 
     Immutable — written by the ingester, deleted only via CASCADE from the
@@ -265,7 +265,7 @@ class CommunicationsTelegramMessageMedia(Base):
     )
 
 
-class CommunicationsTelegramMessageMediaExtraction(Base):
+class CommunicationsTelegramMessageMediaExtraction(Base, ImmutableMixin):
     """Append-only extracted text content from Telegram message media (ADR-014).
 
     Immutable — written by media_extract, deleted only via CASCADE from the

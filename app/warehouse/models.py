@@ -17,7 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.shared.base_model import Base, TimestampMixin
+from app.shared.base_model import Base, ImmutableMixin, TimestampMixin
 
 
 class WarehouseReceipt(Base, TimestampMixin):
@@ -117,7 +117,7 @@ class WarehouseStockItem(Base, TimestampMixin):
     )
 
 
-class WarehousePendingPriceResolution(Base):
+class WarehousePendingPriceResolution(Base, ImmutableMixin):
     """Conflict record: receipt arrived with a different price than existing stock.
 
     Immutable — deleted (not updated) when operator resolves the conflict.

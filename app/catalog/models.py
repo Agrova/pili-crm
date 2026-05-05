@@ -24,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.shared.base_model import Base, TimestampMixin
+from app.shared.base_model import Base, ImmutableMixin, TimestampMixin
 from app.shared.types import CatalogSourceKind, currency_column
 
 # References pricing_purchase_type enum without cross-module Python import
@@ -173,7 +173,7 @@ class CatalogProductListing(Base, TimestampMixin):
     )
 
 
-class CatalogListingPrice(Base):
+class CatalogListingPrice(Base, ImmutableMixin):
     __tablename__ = "catalog_listing_price"
     __table_args__ = (
         CheckConstraint("price >= 0", name="ck_catalog_listing_price_price"),

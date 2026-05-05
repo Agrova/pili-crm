@@ -8,6 +8,12 @@ class Base(DeclarativeBase):
     pass
 
 
+class ImmutableMixin:
+    """Mixin for append-only / delete-only models without updated_at."""
+
+    __immutable__ = True
+
+
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
