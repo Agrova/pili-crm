@@ -15,6 +15,18 @@
 
 ## Закрытые вопросы
 
+### [2026-04-22] — FastAPI: автоматический запуск при старте macOS (launchd + health)
+
+- **Суть:** FastAPI обязателен для Cowork (ADR-005 lifespan-триггер) и должен запускаться автоматически при загрузке Mac. Оператор запускал вручную каждое утро — риск забыть, перезагрузки macOS, молчаливые сбои.
+- **Принятое решение (2026-04-27, вариант 1 — launchd + health-check):** launchd plist `~/Library/LaunchAgents/com.pilistrogai.fastapi.plist` с `RunAtLoad=true`, `KeepAlive=true`, `WorkingDirectory=/Users/protey/pili-crm`, python3 -m uvicorn, логи в `logs/`, `EnvironmentVariables` с DATABASE_URL.
+- **Статус:** closed
+- **Закрыт:** 2026-05-06, G8 (Cowork Sonnet 4.6 + Medium). Артефакты:
+  - `pili-crm/com.pilistrogai.fastapi.plist` — plist в репо; установка: `cp ~/pili-crm/com.pilistrogai.fastapi.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.pilistrogai.fastapi.plist`
+  - `pili-crm/logs/.gitkeep` — директория logs/ в git
+  - `pili-crm/docs/runbook_fastapi_autostart.md` — установка, остановка, диагностика, alias crm-status
+  - `/health` endpoint в `app/main.py` — был готов до G8
+- **CP11 достигнут** (требует ручного `launchctl load` и проверки после reboot — см. чек-лист в runbook).
+
 ### [2026-04-26] — ADR-011 Addendum 2 — реализация распределения Mac master + PC worker
 
 - **Суть:** боевой прогон 850 unreviewed-чатов на Mac исключён из-за теплового ограничения (throttling через ~1 час непрерывной нагрузки). Решение: PC (RTX 3060 Ti, 24/7) выполняет тяжёлые LLM-прогоны как worker, Mac остаётся master с боевой БД. Sync результатов pull-моделью раз в сутки. Apply (запись orders, profile updates) — только на Mac под контролем оператора через Cowork.

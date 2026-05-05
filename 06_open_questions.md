@@ -186,28 +186,8 @@
 
 ### [2026-04-22] — FastAPI: автоматический запуск при старте macOS (launchd + health, решение принято 2026-04-27)
 
-- **Суть:** FastAPI обязателен для Cowork (derive-status, ADR-005 lifespan-триггер) и должен запускаться автоматически при загрузке Mac. Сейчас оператор запускает вручную каждое утро командой `cd /Users/protey/pili-crm && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000`. Забывчивость, перезагрузки macOS и молчаливые сбои процесса приводят к тому что Cowork работает «как будто», но derive-status не срабатывает.
-- **Принятое решение (2026-04-27, вариант 1 — launchd + health-check):**
-  1. **launchd plist** `~/Library/LaunchAgents/com.pilistrogai.fastapi.plist` (ASCII reverse-DNS, без кириллицы — см. правило в этом же файле про launchd plist для tg-incremental):
-     - `RunAtLoad=true` — запускается при логине пользователя.
-     - `KeepAlive=true` — auto-restart при падении процесса.
-     - `WorkingDirectory=/Users/protey/pili-crm`.
-     - `ProgramArguments` — путь к `python3` + аргументы `-m uvicorn app.main:app --host 0.0.0.0 --port 8000`.
-     - `StandardOutPath=/Users/protey/pili-crm/logs/fastapi-stdout.log`, `StandardErrorPath=/Users/protey/pili-crm/logs/fastapi-stderr.log` (директорию `logs/` создать в репо, добавить в `.gitignore`).
-     - `EnvironmentVariables` — `DATABASE_URL`, и другое из `.env` если необходимо для запуска (или полагаемся на чтение `.env` через pydantic-settings).
-  2. **Health-check эндпойнт** в FastAPI: `GET /health` → `{"status": "ok", "version": "..."}` (5-10 строк кода в `app/main.py` или отдельном модуле). Не требует БД-доступа — просто факт работы FastAPI.
-  3. **Shell-alias** в `~/.zshrc`: `alias crm-status='curl -s http://localhost:8000/health || echo "FastAPI DOWN"'`. Одна команда показывает живёт процесс или нет.
-  4. **Runbook оператора** в `docs/` — как запустить/остановить/перезапустить FastAPI через `launchctl load/unload ~/Library/LaunchAgents/com.pilistrogai.fastapi.plist`, где смотреть логи, что делать если не запускается.
-- **Что нужно сделать:**
-  1. Сгенерировать plist-файл с правильными путями и зависимостями.
-  2. Добавить эндпойнт `GET /health` в `app/main.py` + регрессионный тест.
-  3. Создать директорию `logs/`, добавить в `.gitignore`.
-  4. Написать runbook — `docs/runbook_fastapi_autostart.md`.
-  5. Опционально: shell-alias оператор добавит сам в `.zshrc` (это не часть реализации, упомянуть в runbook).
-- **Связанные задачи:** ADR-005 (lifespan-триггер ежесуточного экспорта зеркала зависит от запущенного FastAPI), запись про автоматический мониторинг статусов (тоже зависит).
-- **Чат:** Prompt Factory for Claude Code (миграция + plist + endpoint + runbook; ~30-45 минут Sonnet 4.6 + Medium)
-- **Приоритет:** **HIGH**
-- **Статус:** open
+- **Статус:** closed
+- **Закрыт:** 2026-05-06, G8. Артефакты: `com.pilistrogai.fastapi.plist` (в репо, cp → `~/Library/LaunchAgents/`), `logs/.gitkeep`, `docs/runbook_fastapi_autostart.md`. `/health` endpoint был готов ранее. CP11 достигнут.
 
 ### [2026-04-22] — Cowork: автоматический мониторинг статусов заказов и доставки
 
