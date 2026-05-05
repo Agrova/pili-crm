@@ -12,18 +12,23 @@ from tools import (
     get_unreviewed_chats,
     link_chat_to_customer,
     list_customers,
+    list_draft_orders,
     list_pending_identity_updates,
+    list_pending_price_resolutions,
     match_shipment,
     pending_orders,
+    resolve_price_resolution,
     search_products,
     update_customer,
     update_order,
     update_order_item_status,
+    verify_draft_order,
 )
 
 TOOLS = (
     match_shipment,
     pending_orders,
+    list_draft_orders,
     list_customers,
     search_products,
     add_to_stock,
@@ -38,12 +43,16 @@ TOOLS = (
     update_customer,
     update_order,
     apply_pending_analysis,
+    verify_draft_order,
+    list_pending_price_resolutions,
+    resolve_price_resolution,
 )
 
 __all__ = [
     "TOOLS",
     "match_shipment",
     "pending_orders",
+    "list_draft_orders",
     "list_customers",
     "search_products",
     "add_to_stock",
@@ -58,4 +67,7 @@ __all__ = [
     "update_customer",
     "update_order",
     "apply_pending_analysis",
+    "verify_draft_order",
+    "list_pending_price_resolutions",
+    "resolve_price_resolution",
 ]
