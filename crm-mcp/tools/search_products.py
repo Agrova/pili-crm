@@ -42,6 +42,16 @@ _SQL = text(
     """
 )
 
+# ADR-008 § 8: one batch query for all product_ids with pending conflicts.
+_PENDING_BY_PRODUCTS_SQL = text(
+    """
+    SELECT wsi.product_id, wpr.receipt_item_id
+    FROM warehouse_pending_price_resolution wpr
+    JOIN warehouse_stock_item wsi ON wsi.id = wpr.existing_stock_item_id
+    WHERE wsi.product_id = ANY(:pids)
+    """
+)
+
 
 async def run(
     session: AsyncSession, query: str, limit: int = 20
@@ -54,21 +64,41 @@ async def run(
             _SQL, {"pat": f"%{q}%", "lim": max(1, min(limit, 50))}
         )
     ).mappings().all()
-    return {
-        "query": q,
-        "results": [
-            {
-                "product_id": r["id"],
-                "name": r["name"],
-                "sku": r["sku"],
-                "supplier": r["supplier"],
-                "declared_weight": _num(r["declared_weight"]),
-                "actual_weight": _num(r["actual_weight"]),
-                "stock_qty": _num(r["stock_qty"]) or 0.0,
-            }
-            for r in rows
-        ],
-    }
+
+    if not rows:
+        return {"query": q, "results": []}
+
+    # Batch-fetch pending conflicts for all returned product_ids (no N+1).
+    product_ids = [r["id"] for r in rows]
+    pending_rows = (
+        await session.execute(_PENDING_BY_PRODUCTS_SQL, {"pids": product_ids})
+    ).mappings().all()
+
+    # Build product_id → [receipt_item_id, ...] mapping.
+    pending_map: dict[int, list[int]] = {}
+    for pr in pending_rows:
+        pending_map.setdefault(int(pr["product_id"]), []).append(
+            int(pr["receipt_item_id"])
+        )
+
+    results = []
+    for r in rows:
+        item: dict[str, Any] = {
+            "product_id": r["id"],
+            "name": r["name"],
+            "sku": r["sku"],
+            "supplier": r["supplier"],
+            "declared_weight": _num(r["declared_weight"]),
+            "actual_weight": _num(r["actual_weight"]),
+            "stock_qty": _num(r["stock_qty"]) or 0.0,
+        }
+        ri_ids = pending_map.get(int(r["id"]))
+        if ri_ids:
+            item["pending_price_resolution"] = True
+            item["pending_resolution_receipt_item_ids"] = ri_ids
+        results.append(item)
+
+    return {"query": q, "results": results}
 
 
 def _num(v: Any) -> float | None:
@@ -89,8 +119,12 @@ def format_text(result: dict[str, Any]) -> str:
         sku_s = f" [{r['sku']}]" if r.get("sku") else ""
         stock = r.get("stock_qty") or 0
         stock_s = f"склад: {stock:g}" if stock else "склад: 0"
+        pending_s = ""
+        if r.get("pending_price_resolution"):
+            ids = r.get("pending_resolution_receipt_item_ids", [])
+            pending_s = f" ⚠️ pending price resolution (receipt_item_id={ids})"
         lines.append(
             f"  • {r['name']}{sku_s} ({r['supplier']}) "
-            f"— {weight_s}, {stock_s}"
+            f"— {weight_s}, {stock_s}{pending_s}"
         )
     return "\n".join(lines)

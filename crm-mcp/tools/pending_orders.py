@@ -53,6 +53,10 @@ _SQL = text(
     """
 )
 
+_PENDING_RESOLUTIONS_SQL = text(
+    "SELECT COUNT(*) FROM warehouse_pending_price_resolution"
+)
+
 
 async def run(
     session: AsyncSession, customer_name: str | None = None
@@ -97,7 +101,16 @@ async def run(
                 }
             )
 
-    return {"orders": list(orders.values())}
+    result: dict[str, Any] = {"orders": list(orders.values())}
+
+    # ADR-008 § 8: surface pending price-conflict count so operator notices them.
+    resolution_count = (
+        await session.execute(_PENDING_RESOLUTIONS_SQL)
+    ).scalar_one()
+    if resolution_count:
+        result["pending_actions"] = {"price_resolutions_count": int(resolution_count)}
+
+    return result
 
 
 def _num(v: Any) -> float | None:
@@ -108,22 +121,32 @@ def _num(v: Any) -> float | None:
 
 def format_text(result: dict[str, Any]) -> str:
     orders = result.get("orders", [])
+    lines = []
     if not orders:
-        return "Активных заказов нет."
-    lines = [f"Активных заказов: {len(orders)}"]
-    for o in orders:
-        c = o["customer"]
-        total = f"{o['total_price']:.0f} ₽" if o.get("total_price") else "—"
-        contact = c.get("telegram_id") or c.get("phone") or c.get("email") or "—"
-        lines.append(
-            f"\n#{o['order_id']} [{o['status']}] — {c['name']} ({contact}), "
-            f"сумма: {total}"
-        )
-        for it in o["items"]:
-            price = it.get("unit_price")
-            price_s = f"{price:.0f} ₽" if price else "—"
+        lines.append("Активных заказов нет.")
+    else:
+        lines.append(f"Активных заказов: {len(orders)}")
+        for o in orders:
+            c = o["customer"]
+            total = f"{o['total_price']:.0f} ₽" if o.get("total_price") else "—"
+            contact = c.get("telegram_id") or c.get("phone") or c.get("email") or "—"
             lines.append(
-                f"  • {it['product_name']} ({it.get('supplier') or '—'}) "
-                f"×{it['quantity']:.0f} по {price_s}"
+                f"\n#{o['order_id']} [{o['status']}] — {c['name']} ({contact}), "
+                f"сумма: {total}"
             )
+            for it in o["items"]:
+                price = it.get("unit_price")
+                price_s = f"{price:.0f} ₽" if price else "—"
+                lines.append(
+                    f"  • {it['product_name']} ({it.get('supplier') or '—'}) "
+                    f"×{it['quantity']:.0f} по {price_s}"
+                )
+
+    pending = result.get("pending_actions", {})
+    if pending.get("price_resolutions_count"):
+        lines.append(
+            f"\n⚠️  Внимание: {pending['price_resolutions_count']} "
+            "неразрешённых ценовых конфликтов — используй list_pending_price_resolutions."
+        )
+
     return "\n".join(lines)
