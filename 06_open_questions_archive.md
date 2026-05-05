@@ -340,3 +340,32 @@
   - Stream idle timeout случился один раз на СТОП 3 (при генерации длинного ответа), продолжилось без потерь через «продолжай».
   - Git identity и remote URL — технические косметические вопросы, вынесены в `06_open_questions.md` low priority.
 - Разблокировано: после заливки реальной Telegram-выгрузки (`python -m ingestion.tg_import`) оператор через Cowork сможет разбирать очередь модерации. Следующий шаг: Задание 3 ADR-010 (Telethon incremental + launchd), либо сначала реальная эксплуатация Заданий 1+2 для обкатки.
+
+---
+
+### [2026-04-22] — ADR-007/008: маркер иммутабельности моделей
+
+- **Суть:** при каждом новом иммутабельном классе (`CatalogListingPrice`, теперь `WarehousePendingPriceResolution`, в будущем audit-таблицы) приходится дополнять `_IMMUTABLE_MODELS` в тесте `test_all_models_have_timestamps`. Хардкод по имени класса — хрупкое решение. Правильнее — атрибут-маркер на модели (`__immutable__ = True` или подобный), через который тест автоматически пропускает иммутабельные таблицы.
+- **Контекст:** долг после Пакета 1 ADR-007 (1 класс в frozenset) вырос после Пакета 2 (2 класса). При реализации Пакета 3 ADR-007 (MCP-tools) — удобный момент закрыть вместе с другими правками тестов.
+- **Чат:** Prompt Factory for Claude Code (включить в промт Пакета 3 отдельной подзадачей «гигиена тестов»)
+- **Приоритет:** medium (не блокирует, но накапливается)
+- **Статус:** closed
+- **Решение:** G7 Пакет 3, коммит `1d37f77`. `ImmutableMixin` добавлен в `app/shared/base_model.py`. Применён к `CatalogListingPrice`, `WarehousePendingPriceResolution`, `CommunicationsTelegramMessageMedia`, `CommunicationsTelegramMessageMediaExtraction`. Тест `test_module_boundaries.py` переведён на `getattr(cls, '__immutable__', False)` — хардкод frozenset удалён.
+
+### [2026-04-22] — ADR-007/008: спящие hooks без callers
+
+- **Суть:** реализованные в Пакете 2 функции `on_purchase_delivered` и `on_warehouse_receipt_item_created` работают только в тестах — в production workflow их ничто не вызывает, потому что MCP-tools для смены статуса закупки и приёмки поступлений ещё не реализованы.
+- **Контекст:** это ожидаемое состояние — MCP-tools запланированы в Пакете 3 и далее. Важно в задании Пакета 3 явно прописать: **любой новый MCP-tool, меняющий `procurement_purchase.status` или создающий `warehouse_receipt_item`, обязан вызывать соответствующий hook в той же транзакции**. Без этого инвариант ADR-008 не работает в production.
+- **Чат:** Архитектурный штаб (учесть при формировании задания Пакета 3)
+- **Приоритет:** high (инвариант ADR-008 не работает без этой интеграции)
+- **Статус:** closed
+- **Решение:** G7 Пакет 3, коммит `6a5247f`. Создан `crm-mcp/tools/receive_stock.py` — вызывает `on_warehouse_receipt_item_created` и (при полной приёмке) `on_purchase_delivered` в одной транзакции. Hook failure не глотается — re-raise после rollback.
+
+### [2026-04-22] — ADR-005: выбор библиотеки Google Sheets API
+
+- **Суть:** какая библиотека будет использоваться для работы с Google Sheets — `gspread` (проще, но меньше гибкости) или `google-api-python-client` (официальная, полный контроль).
+- **Контекст:** вопрос не архитектурный, а операционный. Решается при написании промта на реализацию модуля `crm-mcp/mirror/`.
+- **Чат:** Prompt Factory for Claude Code
+- **Приоритет:** medium (блокирует реализацию ADR-005)
+- **Статус:** closed
+- **Решение:** G7 подзадача 2. Принят `gspread>=6.0` + `google-auth>=2.0`. Обоснование: MVP, один разработчик, gspread покрывает все операции. Зафиксировано в `crm-mcp/mirror/README.md`.
