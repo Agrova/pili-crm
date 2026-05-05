@@ -13,6 +13,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.orders.models import IMMUTABLE_ORDER_STATUSES
+
 NAME = "update_order"
 DESCRIPTION = (
     "Добавляет позиции в существующий заказ (итерация 1: только items_to_add). "
@@ -123,12 +125,12 @@ async def run(
     ).mappings().one_or_none()
     if order is None:
         return {"status": "error", "error": "order_not_found", "order_id": oid}
-    if order["status"] == "cancelled":
+    if order["status"] in {s.value for s in IMMUTABLE_ORDER_STATUSES}:
         return {
             "status": "error",
-            "error": "order_cancelled",
+            "error": "order_immutable",
             "order_id": oid,
-            "order_status": "cancelled",
+            "order_status": order["status"],
         }
 
     try:
@@ -198,9 +200,10 @@ def format_text(result: dict[str, Any]) -> str:
         err = result.get("error", "неизвестная ошибка")
         if err == "order_not_found":
             return f"Ошибка: заказ id={result.get('order_id')} не найден."
-        if err == "order_cancelled":
+        if err == "order_immutable":
             oid_val = result.get("order_id", 0)
-            return f"Ошибка: заказ З-{oid_val:03d} отменён."
+            st = result.get("order_status", "?")
+            return f"Ошибка: заказ З-{oid_val:03d} в статусе '{st}' — редактирование запрещено."
         return f"Ошибка: {err}"
     n = len(result["added_items"])
     total = result["new_total"]

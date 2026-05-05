@@ -17,6 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.orders.models import (
+    IMMUTABLE_ITEM_STATUSES,
+    IMMUTABLE_ORDER_STATUSES,
     ITEM_STATUS_WEIGHT,
     ITEM_TO_ORDER_STATUS_MAP,
     OrdersCustomer,
@@ -47,6 +49,22 @@ def derive_order_status(item_statuses: list[str]) -> str:
 
     earliest = min(active, key=lambda s: ITEM_STATUS_WEIGHT.get(s, 999))
     return ITEM_TO_ORDER_STATUS_MAP[earliest]
+
+
+def assert_order_mutable(order: OrdersOrder) -> None:
+    """Raise if the order has reached an immutable status."""
+    if order.status in IMMUTABLE_ORDER_STATUSES:
+        raise ValueError(
+            f"Order {order.id} is in status '{order.status}' and cannot be mutated."
+        )
+
+
+def assert_item_mutable(item: OrdersOrderItem) -> None:
+    """Raise if the order item has reached an immutable status."""
+    if item.status in IMMUTABLE_ITEM_STATUSES:
+        raise ValueError(
+            f"OrderItem {item.id} is in status '{item.status}' and cannot be mutated."
+        )
 
 
 async def update_order_status_from_items(
@@ -252,6 +270,7 @@ async def add_order_item(
     order = await session.get(OrdersOrder, order_id)
     if order is None:
         raise ValueError(f"Order {order_id} not found")
+    assert_order_mutable(order)
     if quantity <= Decimal("0"):
         raise ValueError("quantity must be > 0")
 

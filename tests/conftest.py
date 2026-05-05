@@ -16,6 +16,19 @@ from sqlalchemy.pool import NullPool
 
 from app.config import settings
 
+# Force-load all ORM models so Base.metadata is fully populated at collection
+# time. Without this, running a single test file in isolation may miss models
+# from other modules (e.g. pricing) that are only imported transitively, causing
+# "NoReferencedTableError" or incomplete CREATE TABLE in the test schema.
+import app.analysis.models  # noqa: F401, E402
+import app.catalog.models  # noqa: F401, E402
+import app.communications.models  # noqa: F401, E402
+import app.finance.models  # noqa: F401, E402
+import app.orders.models  # noqa: F401, E402
+import app.pricing.models  # noqa: F401, E402
+import app.procurement.models  # noqa: F401, E402
+import app.warehouse.models  # noqa: F401, E402
+
 
 def pytest_configure(config: pytest.Config) -> None:
     """Safety guard: refuse to run tests on prod DB."""
@@ -50,7 +63,14 @@ def pytest_configure(config: pytest.Config) -> None:
 async def db_session() -> AsyncIterator[AsyncSession]:
     """Async DB session that rolls back all writes after each test.
 
-    Repository functions must use flush() (not commit()) for rollback to work.
+    Isolation strategy: rollback (not truncate).
+    - Why rollback: no DDL lock, faster than truncate, works with nested
+      savepoints. Each test gets a clean slate without touching other tests.
+    - Constraint: repository functions must use flush() not commit(); a commit
+      would persist data outside the transaction and break rollback isolation.
+    - Writing a new test: `async def test_foo(db_session: AsyncSession): ...`
+      The fixture handles setup and teardown automatically.
+    - Running one test: `python3 -m pytest tests/path/test_file.py::test_name -v`
     """
     assert settings.test_database_url  # guarded by pytest_configure above
     engine = create_async_engine(settings.test_database_url, poolclass=NullPool)

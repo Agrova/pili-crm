@@ -77,6 +77,22 @@ PENDING_ITEM_STATUSES: frozenset[OrdersOrderItemStatus] = frozenset(
     }
 )
 
+# Statuses after which the record must not be mutated.
+IMMUTABLE_ORDER_STATUSES: frozenset[OrdersOrderStatus] = frozenset(
+    {
+        OrdersOrderStatus.confirmed,
+        OrdersOrderStatus.delivered,
+        OrdersOrderStatus.cancelled,
+    }
+)
+
+IMMUTABLE_ITEM_STATUSES: frozenset[OrdersOrderItemStatus] = frozenset(
+    {
+        OrdersOrderItemStatus.delivered,
+        OrdersOrderItemStatus.cancelled,
+    }
+)
+
 
 class OrdersCustomer(Base, TimestampMixin):
     __tablename__ = "orders_customer"

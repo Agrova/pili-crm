@@ -7,6 +7,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.orders.models import IMMUTABLE_ITEM_STATUSES
+
 NAME = "update_order_item_status"
 DESCRIPTION = (
     "Обновляет статус позиции заказа. Принимает название товара и новый статус "
@@ -191,6 +193,15 @@ async def run(
     chosen_order_id = chosen["order_id"]
     old_item_status = chosen["item_status"]
     old_order_status = chosen["order_status"]
+
+    # Guard: SQL already filters delivered/cancelled items, but be explicit.
+    if old_item_status in {s.value for s in IMMUTABLE_ITEM_STATUSES}:
+        return {
+            "status": "error",
+            "error": "item_immutable",
+            "item_id": item_id,
+            "item_status": old_item_status,
+        }
 
     # 3. Update item status — DB trigger automatically updates orders_order.status
     await session.execute(_UPDATE_SQL, {"new_status": parsed, "item_id": item_id})
