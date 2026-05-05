@@ -16,6 +16,12 @@ operator messages are kept only when shorter than
 no identity signal but eat the token budget on big chats (chat 5942
 is ~72K chars). See ADR-011 X1 iter 4 brief, blocker resolution A+.
 
+Multi-pass windowing (hotfix for Mac 24 GB kernel panics): when
+filtered messages exceed ``IDENTITY_WINDOW_SIZE``, the extraction runs
+in windows of that size and results are merged field-by-field (first
+non-null value wins). This prevents GPU OOM on large chats (>1500 msg)
+without losing identity signals that appear late in the conversation.
+
 Graceful degrade: any failure (LLM timeout, JSON parse, validation,
 LM Studio down) is logged with full traceback and yields an empty
 ``Identity`` whose ``confidence_notes`` carries the WARNING — the
@@ -40,6 +46,11 @@ logger = logging.getLogger(__name__)
 # («Добрый день, Анна», «Кристина, отправил трек») do carry name signals
 # via addressings — those must be kept.
 OPERATOR_MAX_LEN_CHARS = 200
+
+# Maximum filtered messages per LLM call. Larger chats are processed in
+# windows of this size and merged. Keeps prompt ~5-8K chars, safe for
+# context_length=16384 on Mac 24 GB (prevents IOGPUFamily kernel panic).
+IDENTITY_WINDOW_SIZE = 200
 
 
 def _is_operator_name(name: str | None) -> bool:
@@ -80,11 +91,76 @@ def _filter_messages_for_identity(
     return filtered
 
 
+def _merge_identities(results: list[Identity]) -> Identity:
+    """Merge multiple Identity results: first non-null value wins per field.
+
+    ``confidence_notes`` from all windows are concatenated so the audit
+    trail is preserved.
+    """
+    merged = Identity()
+    notes: list[str] = []
+    fields = [
+        "name_guess", "phone", "address", "email",
+        "instagram", "telegram_username", "city", "confidence_notes",
+    ]
+    for identity in results:
+        for field in fields:
+            if field == "confidence_notes":
+                val = getattr(identity, field, None)
+                if val:
+                    notes.append(val)
+                continue
+            if getattr(merged, field, None) is None:
+                val = getattr(identity, field, None)
+                if val is not None:
+                    setattr(merged, field, val)
+    if notes:
+        merged.confidence_notes = " | ".join(notes)
+    return merged
+
+
+async def _extract_window(
+    window: list[ChatMessage],
+    llm: LMStudioClient,
+    window_idx: int,
+    total_filtered: int,
+    total_messages: int,
+) -> Identity:
+    """Run a single identity extraction LLM call for one window."""
+    prompt = render(
+        IDENTITY_EXTRACT_PROMPT,
+        messages=format_messages_for_prompt(window),
+    )
+    try:
+        raw = await llm.complete(prompt)
+        return Identity.model_validate_json(_strip_json_fence(raw))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "identity extraction failed window=%d (%d/%d messages): %s",
+            window_idx,
+            total_filtered,
+            total_messages,
+            type(exc).__name__,
+        )
+        short = str(exc).splitlines()[0][:200] if str(exc) else ""
+        return Identity(
+            confidence_notes=(
+                f"WARNING: identity extraction failed window={window_idx}: "
+                f"{type(exc).__name__}: {short}"
+            )
+        )
+
+
 async def extract_identity_from_chunks(
     chunks: list[list[ChatMessage]],
     llm: LMStudioClient,
 ) -> Identity:
-    """Single-pass identity extraction directly from chunked messages.
+    """Multi-pass identity extraction directly from chunked messages.
+
+    Splits filtered messages into windows of ``IDENTITY_WINDOW_SIZE`` and
+    runs one LLM call per window, then merges results (first non-null wins).
+    This prevents GPU OOM on large chats while preserving all identity
+    signals regardless of where they appear in the conversation.
 
     Returns an ``Identity`` with up to all 8 fields populated where the
     LLM found them (``null`` otherwise). On any extraction failure
@@ -108,28 +184,26 @@ async def extract_identity_from_chunks(
             confidence_notes="WARNING: identity extraction skipped: empty chat after filtering"
         )
 
-    prompt = render(
-        IDENTITY_EXTRACT_PROMPT,
-        messages=format_messages_for_prompt(filtered),
-    )
-
-    try:
-        raw = await llm.complete(prompt)
-        identity = Identity.model_validate_json(_strip_json_fence(raw))
-    except Exception as exc:  # noqa: BLE001
-        logger.exception(
-            "identity extraction failed (%d/%d messages): %s",
+    # Split into windows
+    windows = [
+        filtered[i : i + IDENTITY_WINDOW_SIZE]
+        for i in range(0, len(filtered), IDENTITY_WINDOW_SIZE)
+    ]
+    n_windows = len(windows)
+    if n_windows > 1:
+        logger.info(
+            "identity_extract: %d messages → %d windows of %d",
             len(filtered),
-            total,
-            type(exc).__name__,
+            n_windows,
+            IDENTITY_WINDOW_SIZE,
         )
-        short = str(exc).splitlines()[0][:200] if str(exc) else ""
-        identity = Identity(
-            confidence_notes=(
-                f"WARNING: identity extraction failed: "
-                f"{type(exc).__name__}: {short}"
-            )
-        )
+
+    results: list[Identity] = []
+    for idx, window in enumerate(windows):
+        identity = await _extract_window(window, llm, idx, len(filtered), total)
+        results.append(identity)
+
+    identity = _merge_identities(results) if len(results) > 1 else results[0]
 
     # Operator-name blocklist (v1.4 final sanity check)
     if _is_operator_name(identity.name_guess):
@@ -146,6 +220,7 @@ async def extract_identity_from_chunks(
 
 
 __all__ = [
+    "IDENTITY_WINDOW_SIZE",
     "OPERATOR_MAX_LEN_CHARS",
     "extract_identity_from_chunks",
 ]
