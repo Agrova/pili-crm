@@ -1,6 +1,6 @@
 # План работ по проекту PiliStrogai CRM
 
-**Текущая версия:** v22 (2026-05-06)
+**Текущая версия:** v23 (2026-05-06)
 **Цель:** провести проект от текущего состояния (полный анализ Telegram-чатов на PC-worker, перезапуск после теплового сбоя Mac) до закрытия `01_scope.md` (включая отложенные «В планах»: Gmail ingestion, finance ledger, Telegram-бот, технический долг).
 
 ## История версий
@@ -17,6 +17,7 @@
 | v20 | 2026-05-06 | **G8 закрыта** — FastAPI launchd autostart. `com.pilistrogai.fastapi.plist`, `logs/.gitkeep`, `docs/runbook_fastapi_autostart.md`. CP11 ✅ (после ручного `launchctl load`). |
 | v21 | 2026-05-06 | **Принят ADR-018 addendum-exchange-rate-update-policy.** Уточняет развилку C ADR-018: правка курса в калькуляторе — локальная, в БД пишется только через явное второе подтверждение в момент создания заказа. Без порога. Затрагивает реализацию G19.1 (сигнатура `calculate_price`) и G19.5 (артефакт `order_calculator.html`). |
 | v22 | 2026-05-06 | **G17 закрыта** — `get_current_exchange_rate` + `set_exchange_rate`. 7 тестов, `cowork-system-prompt.md` v2.2 (23 tools). CP16 ✅. Коммит `bcadf1a`. |
+| v23 | 2026-05-06 | **Устранение дрейфа main vs план.** Закоммичены untracked ADR (F04, F06, ADR-016, ADR-018 + addendum, ADR-003 addendum-quoted), MCP-tools G5.5 (`list_draft_orders`, `verify_draft_order`), CLAUDE.md (Cowork bootstrap + документооборот + модель работы), inbox_measurement.md, schema-gaps. Merge ветки G17 (`bcadf1a`) и G12 волны 1 (`6cab634`) в main. Тесты 7+12 зелёные, mypy --strict 0 ошибок. |
 
 ## Как читать этот документ
 
