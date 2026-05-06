@@ -9,6 +9,7 @@ from tools import (
     create_customer,
     create_order,
     find_customer,
+    get_current_exchange_rate,
     get_unreviewed_chats,
     link_chat_to_customer,
     list_customers,
@@ -20,6 +21,7 @@ from tools import (
     receive_stock,
     resolve_price_resolution,
     search_products,
+    set_exchange_rate,
     update_customer,
     update_order,
     update_order_item_status,
@@ -48,6 +50,8 @@ TOOLS = (
     verify_draft_order,
     list_pending_price_resolutions,
     resolve_price_resolution,
+    get_current_exchange_rate,
+    set_exchange_rate,
 )
 
 __all__ = [
@@ -73,4 +77,6 @@ __all__ = [
     "verify_draft_order",
     "list_pending_price_resolutions",
     "resolve_price_resolution",
+    "get_current_exchange_rate",
+    "set_exchange_rate",
 ]
