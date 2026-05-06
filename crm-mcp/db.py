@@ -1,6 +1,11 @@
 """DB plumbing for crm-mcp.
 
 Independent of app/ — uses raw text() queries, no ORM models duplicated.
+
+NOTE: tools that call app/ service-layer functions (e.g. apply_pending_analysis)
+require all ORM models to be registered with SQLAlchemy's mapper before the
+first session is used. The import block below ensures every model subclass of
+Base is loaded so FK relationships resolve correctly at runtime.
 """
 
 from __future__ import annotations
@@ -21,6 +26,16 @@ from sqlalchemy.ext.asyncio import (
 )
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
+
+# Register all ORM models so SQLAlchemy mapper resolves FK relationships.
+# Required by service-layer tools (apply_pending_analysis, etc.).
+import app.analysis.models  # noqa: F401, E402
+import app.catalog.models  # noqa: F401, E402
+import app.communications.models  # noqa: F401, E402
+import app.orders.models  # noqa: F401, E402
+import app.pricing.models  # noqa: F401, E402
+import app.procurement.models  # noqa: F401, E402
+import app.warehouse.models  # noqa: F401, E402
 
 logger = logging.getLogger("crm-mcp.db")
 
