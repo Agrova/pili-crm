@@ -10,6 +10,7 @@ from tools import (
     create_order,
     find_customer,
     get_current_exchange_rate,
+    get_message_template,
     get_unreviewed_chats,
     link_chat_to_customer,
     list_customers,
@@ -52,6 +53,7 @@ TOOLS = (
     resolve_price_resolution,
     get_current_exchange_rate,
     set_exchange_rate,
+    get_message_template,
 )
 
 __all__ = [
@@ -79,4 +81,5 @@ __all__ = [
     "resolve_price_resolution",
     "get_current_exchange_rate",
     "set_exchange_rate",
+    "get_message_template",
 ]

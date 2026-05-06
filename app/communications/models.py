@@ -6,13 +6,16 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Identity,
     Index,
+    String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy import (
@@ -295,6 +298,28 @@ class CommunicationsTelegramMessageMediaExtraction(Base, ImmutableMixin):
 
     message: Mapped[CommunicationsTelegramMessage] = relationship(
         "CommunicationsTelegramMessage", back_populates="media_extraction"
+    )
+
+
+class MessageTemplate(Base):
+    """Шаблоны сообщений клиентам. Владелец модуля: communications."""
+
+    __tablename__ = "communications_message_template"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    code: Mapped[str] = mapped_column(String(100), nullable=False)
+    body_template: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(String(5), nullable=False, default="ru")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("code", "language", name="uq_message_template_code_language"),
     )
 
 
