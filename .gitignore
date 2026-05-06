@@ -43,3 +43,6 @@ htmlcov/
 # Logs
 *.log
 data/seed/
+
+# Claude Code worktrees
+.claude/worktrees/
