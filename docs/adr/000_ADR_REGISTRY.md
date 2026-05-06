@@ -17,7 +17,9 @@
 |---|---|---|---|---|
 | ADR-001 v2 | Модульный монолит, Claude Cowork + MCP | 2026-04-22 | `ADR-001-v2-modular-monolith.md` | Заменяет ADR-001 v1 |
 | ADR-002 | Python 3.12+ / FastAPI / SQLAlchemy 2.0 / Alembic | 2026-04-22 | `ADR-002-python-fastapi.md` | |
-| ADR-003 | Core schema PostgreSQL + статусы заказов | 2026-04-22 | `ADR-003-final-ready-postgres-core-schema.md` | С аддендумом по статусам |
+| ADR-003 | Core schema PostgreSQL + статусы заказов | 2026-04-22 | `ADR-003-final-ready-postgres-core-schema.md` | С двумя аддендумами (statuses + quoted) |
+| ADR-003 addendum-statuses | Статусы заказов и позиций | 2026-04-20 | `ADR-003-addendum-statuses.md` | 8 order-level + 7 item-level + derivation rule |
+| ADR-003 addendum-quoted | Статус `quoted` (отправлено клиенту, ждём ответа) | 2026-05-05 | `ADR-003-addendum-quoted-status.md` | Между draft и confirmed; guard для derive-trigger в ADR-006. Реализация — внутри G19 |
 | ADR-004 | Pricing & profit policy | 2026-04-22 | `ADR-004-pricing-profit-policy.md` | Retail/manufacturer paths, rounding, discounts |
 | ADR-005 | Mirror Google Sheets | 2026-04-22 | `ADR-005-mirror-google-sheets.md` | Триггер с полной пересборкой раз в сутки |
 | ADR-006 | Derive-status PostgreSQL trigger | 2026-04-22 | `ADR-006-derive-status-trigger.md` | Статус заказа автоматически |
@@ -35,6 +37,8 @@
 | ADR-015 | Telegram media metadata stabilization | 2026-04-26 | `ADR-015-telegram-media-metadata-stabilization.md` | Pre-requisite для ADR-014; закрыт 2026-04-27 |
 | ADR-016 | Token economy + Mobile capture | 2026-04-30 | `ADR-016-token-economy-and-mobile-capture.md` | Cowork live artifacts (desktop) + Telegram capture-only бот (mobile). Реализация — G18 |
 | ADR-017 | Фильтрация исторических orders при apply LLM-анализа | 2026-04-30 | `ADR-017-filter-historical-orders-on-apply.md` | Отсечение orders без items / с терминальными статусами в `apply_analysis_to_customer`. Реализация — G4.6. Триггер на bump промта v1.5 — `06_open_questions.md` |
+| ADR-018 | Калькулятор нового заказа (первый write-артефакт) | 2026-05-05 | `ADR-018-order-calculator-artifact.md` | Cowork live artifact с write через `create_order(status='quoted')`. Реализация — G19. Явное смягчение ADR-001 v2 для одного сценария |
+| ADR-018 addendum-exchange-rate | Политика обновления курса валют через калькулятор | 2026-05-06 | `ADR-018-addendum-exchange-rate-update-policy.md` | Уточняет развилку C ADR-018: правка курса в калькуляторе локальная, БД пишется только через второе явное подтверждение в момент создания заказа. Без порога. Реализация — внутри G19.5 (артефакт) и G19.1 (сигнатура `calculate_price`) |
 
 ---
 
@@ -63,4 +67,4 @@ ADR-F04 принят в группе G1 (CP2 достигнут). Реализа
 
 ---
 
-*Последнее обновление: 2026-04-30 (ADR-017 принят и реализован: G4.5 + G4.6 закрыты, PLAN.md v15, CP7.5 ✅). HEAD origin/main: `59fc9ce`.*
+*Последнее обновление: 2026-05-06 (ADR-018 addendum-exchange-rate-update-policy принят; уточняет развилку C ADR-018 — политика обновления курса в БД через калькулятор, двойное подтверждение, без порога). HEAD origin/main: `93ee88a`.*
