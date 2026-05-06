@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -16,7 +15,6 @@ from app.procurement.models import (
     ProcurementPurchaseStatus,
 )
 from app.procurement.services import on_purchase_delivered
-
 
 # ---------------------------------------------------------------------------
 # Helpers

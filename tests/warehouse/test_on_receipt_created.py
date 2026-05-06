@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -26,12 +26,11 @@ from app.warehouse.models import (
 )
 from app.warehouse.services import DEFAULT_STOCK_LOCATION, on_warehouse_receipt_item_created
 
-
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
 
-_NOW = datetime(2026, 4, 22, 10, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 4, 22, 10, 0, 0, tzinfo=UTC)
 
 
 async def _get_ids(session: AsyncSession) -> tuple[int, int]:

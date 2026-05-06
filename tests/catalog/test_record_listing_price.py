@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -63,7 +63,7 @@ async def _product_without_listing_of_supplier(
     return int(row2.id), other_source_id
 
 
-_OBS = datetime(2026, 4, 1, tzinfo=timezone.utc)
+_OBS = datetime(2026, 4, 1, tzinfo=UTC)
 
 
 @pytest.mark.asyncio

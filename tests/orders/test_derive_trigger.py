@@ -5,12 +5,8 @@ All tests use real PostgreSQL via db_session fixture and roll back after each te
 
 from __future__ import annotations
 
-from decimal import Decimal
-
-import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
