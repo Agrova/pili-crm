@@ -39,6 +39,7 @@
 | ADR-017 | Фильтрация исторических orders при apply LLM-анализа | 2026-04-30 | `ADR-017-filter-historical-orders-on-apply.md` | Отсечение orders без items / с терминальными статусами в `apply_analysis_to_customer`. Реализация — G4.6. Триггер на bump промта v1.5 — `06_open_questions.md` |
 | ADR-018 | Калькулятор нового заказа (первый write-артефакт) | 2026-05-05 | `ADR-018-order-calculator-artifact.md` | Cowork live artifact с write через `create_order(status='quoted')`. Реализация — G19. Явное смягчение ADR-001 v2 для одного сценария |
 | ADR-018 addendum-exchange-rate | Политика обновления курса валют через калькулятор | 2026-05-06 | `ADR-018-addendum-exchange-rate-update-policy.md` | Уточняет развилку C ADR-018: правка курса в калькуляторе локальная, БД пишется только через второе явное подтверждение в момент создания заказа. Без порога. Реализация — внутри G19.5 (артефакт) и G19.1 (сигнатура `calculate_price`) |
+| ADR-018 addendum-unique-products | Уникальные товары — отдельная сущность `orders_unique_purchase` | 2026-05-06 | `ADR-018-addendum-unique-products.md` | Закрывает развилку D ADR-018 + запись 2026-05-05 в `schema-gaps.md`. Принят D2 + β: новая таблица `orders_unique_purchase`, расширение `orders_order_item` / `procurement_purchase_item` / `warehouse_receipt_item` симметричными NULLABLE FK + CHECK. Поддержка во всём потоке order → procurement → warehouse, включая `match_shipment`. `warehouse_stock_item` НЕ расширяется. Зафиксировано намерение по distribution shipping + actual_weight backfill (реализация — G6 + ADR-F01). Реализация схемы — G19.3, расширение `match_shipment` — новая подзадача G19.7 |
 
 ---
 
@@ -67,4 +68,4 @@ ADR-F04 принят в группе G1 (CP2 достигнут). Реализа
 
 ---
 
-*Последнее обновление: 2026-05-06 (ADR-018 addendum-exchange-rate-update-policy принят; уточняет развилку C ADR-018 — политика обновления курса в БД через калькулятор, двойное подтверждение, без порога). HEAD origin/main: `93ee88a`.*
+*Последнее обновление: 2026-05-06 (ADR-018 addendum-unique-products принят; закрывает развилку D ADR-018 — D2 + β, таблица `orders_unique_purchase` + расширение четырёх таблиц симметричными NULLABLE FK, поддержка во всём потоке order → procurement → warehouse, намерение по distribution shipping в G6). HEAD origin/main: `93ee88a`.*

@@ -78,5 +78,5 @@
   - **(A)** `order_item.product_id NULLABLE` + поля `inline_name TEXT NULL`, `inline_weight_kg NUMERIC NULL`, `inline_purchase_price_fcy NUMERIC NULL`, `inline_purchase_currency CHAR(3) NULL`, `inline_source_url TEXT NULL`. CHECK constraint: либо `product_id IS NOT NULL`, либо все `inline_*` заполнены.
   - **(B)** Отдельная таблица `orders_unique_purchase` (id, name, weight_kg, purchase_price_fcy, purchase_currency, source_url, notes) + FK от `order_item.unique_purchase_id` (тоже nullable). Чище семантически, дороже по стоимости.
   - **(C)** Заводить в каталоге с флагом `is_unique=true` или категорией «штучные», скрывать из обычного поиска. Минус: каталог всё равно растёт мёртвыми SKU.
-- **Статус:** open — ждёт ADR
-- **Связанные решения:** G19 (калькулятор нового заказа), ADR-018 (решение по архитектуре калькулятора будет ссылаться на это решение).
+- **Статус:** **closed** — принят ADR-018 addendum-unique-products (2026-05-06)
+- **Связанные решения:** [ADR-018 Addendum: Уникальные товары](adr/ADR-018-addendum-unique-products.md). Принят вариант **(B)** + расширение паттерна на `procurement_purchase_item` и `warehouse_receipt_item` (β — уникальный товар проходит весь поток order → procurement → warehouse). `warehouse_stock_item` не расширяется (уникальные товары не образуют stock). Реализация — G19.3 + G19.7 (адаптация `match_shipment`). Намерение по distribution shipping и `actual_weight` backfill зафиксировано в открытом вопросе для G6.
