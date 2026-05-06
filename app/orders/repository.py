@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import TypedDict
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -232,16 +233,19 @@ async def get_customer_debt_summary(
         .join(OrdersOrderItem, OrdersOrder.id == OrdersOrderItem.order_id)
     )
     rows = (await session.execute(stmt)).all()
-    acc: dict[int, dict[str, object]] = {}
+
+    class _Bucket(TypedDict):
+        orders: set[int]
+        amount: Decimal
+
+    acc: dict[int, _Bucket] = {}
     for cid, oid, price, qty, status in rows:
         bucket = acc.setdefault(cid, {"orders": set(), "amount": Decimal("0")})
-        bucket["orders"].add(oid)  # type: ignore[union-attr]
+        bucket["orders"].add(int(oid))
         if status in PENDING_ITEM_STATUSES and price is not None:
-            bucket["amount"] = (
-                bucket["amount"] + (price * qty)  # type: ignore[operator]
-            )
+            bucket["amount"] = bucket["amount"] + Decimal(price) * Decimal(qty)
     return {
-        cid: (len(v["orders"]), v["amount"])  # type: ignore[arg-type]
+        cid: (len(v["orders"]), v["amount"])
         for cid, v in acc.items()
     }
 

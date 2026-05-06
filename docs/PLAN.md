@@ -56,7 +56,7 @@
 | **G9** | ADR-010 Задание 3 — incremental Telegram | `tg_incremental.py` через Telethon + launchd plist | Cowork-pf → Claude Code | Sonnet 4.6 + Medium | G10 (аналогичная архитектура) | ⏳ В очереди |
 | **G10** | Gmail ingestion + автомониторинг (D2) | Gmail → подтверждение заказа → трек → контроль сроков → алерт. Сначала ADR, потом реализация | Cowork-arch → Cowork-pf → Claude Code | Opus 4.6 + High → Sonnet 4.6 + High | — | ⏳ В очереди |
 | **G11** | Правила матчинга коммуникаций (D3) | Формализовать `communications_link.target_module` rules | Cowork-arch | Opus 4.6 + Medium | — | ⏳ В очереди |
-| **G12** | Технический долг | mypy, ручной status в `create_order`, conftest, маркер `__immutable__` | Cowork-pf → Claude Code | Sonnet 4.6 + Medium | — | 🟡 Готов к запуску |
+| **G12** | Технический долг | mypy, ручной status в `create_order`, conftest, маркер `__immutable__` | Cowork-pf → Claude Code | Sonnet 4.6 + Medium | — | 🟠 Частично закрыта (a/c/d ✅), ждёт волну 2 (b) после G19.2 |
 | **G13** | Admin-tool мержа дубликатов клиентов | По первой реальной коллизии `telegram_id` | Cowork-pf → Claude Code | Sonnet 4.6 + Medium | — (триггер: коллизия) | 💤 По триггеру |
 | **G14** | Telegram-бот: полный мобильный CRM (read+write в основные таблицы) | Полный CRM-клиент в Telegram. **Capture-only часть вынесена в G18.2** (ADR-016). G14 активируется только если capture-only окажется недостаточно | Cowork-arch → Cowork-pf → Claude Code | Opus 4.6 + Medium → Sonnet 4.6 + High | — | 💤 По остаточному принципу (после G18.2) |
 | **G15** | ADR-008 addendum: процентный порог цен (D4) | Для дорогих позиций (>50 000 RUB) `rounding_step=100` даёт 0.2% → ложные конфликты | Cowork-arch | Opus 4.6 + Medium | — | 💤 По триггеру |
